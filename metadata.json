@@ -1,0 +1,8 @@
+{
+  "name": "Sổ Báo Vắng & Xin Nghỉ Học Điện Tử",
+  "description": "Hệ thống quản lý báo vắng học sinh trực tuyến từ phụ huynh dành cho nhà trường, tích hợp AI soạn đơn xin phép nghỉ học chuẩn quy chuẩn.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

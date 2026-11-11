@@ -1,0 +1,92 @@
+[
+  {
+    "id": "tch-1",
+    "orderNumber": 1,
+    "name": "Nguyễn Thị Hoa",
+    "assignedClass": "6A1",
+    "isHomeroom": true,
+    "username": "gv_hoant",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-2",
+    "orderNumber": 2,
+    "name": "Trần Đình Trọng",
+    "assignedClass": "7B3",
+    "isHomeroom": true,
+    "username": "gv_trongtd",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-3",
+    "orderNumber": 3,
+    "name": "Lê Hoàng Mai",
+    "assignedClass": "9A2",
+    "isHomeroom": true,
+    "username": "gv_mailh",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-4",
+    "orderNumber": 4,
+    "name": "Phạm Quốc Hưng",
+    "assignedClass": "10C1",
+    "isHomeroom": true,
+    "username": "gv_hungpq",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-5",
+    "orderNumber": 5,
+    "name": "Vũ Minh Hằng",
+    "assignedClass": "8A4",
+    "isHomeroom": true,
+    "username": "gv_hangvm",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-6",
+    "orderNumber": 6,
+    "name": "Nguyễn Văn Tuấn",
+    "assignedClass": "",
+    "isHomeroom": false,
+    "username": "gv_tuannv",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-7",
+    "orderNumber": 7,
+    "name": "Trần Thu Hà",
+    "assignedClass": "",
+    "isHomeroom": false,
+    "username": "gv_hatt",
+    "password": "123",
+    "createdAt": "2026-11-09T06:00:00Z"
+  },
+  {
+    "id": "tch-1794405030421-730",
+    "orderNumber": 8,
+    "name": "Nguyễn Văn An",
+    "assignedClass": "6A3",
+    "isHomeroom": true,
+    "username": "gv_annv",
+    "password": "GV4264",
+    "createdAt": "2026-11-11T13:50:30.421Z"
+  },
+  {
+    "id": "tch-1794405030421-626",
+    "orderNumber": 9,
+    "name": "Trần Thị Bích",
+    "assignedClass": "",
+    "isHomeroom": false,
+    "username": "gv_bichtt",
+    "password": "GV7547",
+    "createdAt": "2026-11-11T13:50:30.421Z"
+  }
+]

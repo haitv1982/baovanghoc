@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sổ Báo Vắng & Xin Nghỉ Học Điện Tử</title>
+    <meta name="description" content="Hệ thống quản lý báo vắng học sinh trực tuyến từ phụ huynh dành cho nhà trường, tích hợp AI soạn đơn xin phép nghỉ học chuẩn quy chuẩn." />
+    <meta property="og:title" content="Sổ Báo Vắng & Xin Nghỉ Học Điện Tử" />
+    <meta property="og:description" content="Hệ thống quản lý báo vắng học sinh trực tuyến từ phụ huynh dành cho nhà trường, tích hợp AI soạn đơn xin phép nghỉ học chuẩn quy chuẩn." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&family=Noto+Serif:ital,wght@0,400;0,600;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var currentFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return currentFetch;
+            },
+            set: function(val) {
+              currentFetch = val;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          // ignore
+        }
+
+        window.addEventListener('error', function(e) {
+          if (
+            (e.filename && e.filename.startsWith('chrome-extension://')) ||
+            (e.message && e.message.includes('Cannot set property fetch'))
+          ) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+      })();
+    </script>
+  </head>
+  <body class="bg-slate-50 text-slate-800 antialiased font-['Be_Vietnam_Pro',sans-serif]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+.font-times {
+  font-family: "Times New Roman", "TimesNewRoman", "Noto Serif", "Tinos", Georgia, serif !important;
+  font-feature-settings: "liga" 1, "calt" 1, "kern" 1;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
