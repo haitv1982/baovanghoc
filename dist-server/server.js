@@ -912,6 +912,37 @@ function createApiApp() {
       return res.status(500).json({ success: false, message: err.message });
     }
   });
+  app.post("/api/parents/batch-delete", (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui l\xF2ng ch\u1ECDn \xEDt nh\u1EA5t m\u1ED9t h\u1ECDc sinh / ph\u1EE5 huynh \u0111\u1EC3 x\xF3a."
+        });
+      }
+      const idSet = new Set(ids.map((v) => String(v)));
+      const users = getUsers();
+      const remaining = users.filter((u) => !idSet.has(u.id));
+      const deletedCount = users.length - remaining.length;
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n ph\u1EE5 huynh n\xE0o kh\u1EDBp \u0111\u1EC3 x\xF3a."
+        });
+      }
+      const reindexed = remaining.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(reindexed);
+      return res.json({
+        success: true,
+        deletedCount,
+        data: reindexed,
+        message: `\u0110\xE3 x\xF3a th\xE0nh c\xF4ng ${deletedCount} t\xE0i kho\u1EA3n h\u1ECDc sinh / ph\u1EE5 huynh.`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
   app.get("/api/auth/parent-qr-lookup", (req, res) => {
     try {
       const cleanPhone = normalizePhone(String(req.query.phone || ""));
@@ -1251,6 +1282,35 @@ function createApiApp() {
       }
       saveAbsences(records);
       return res.json({ success: true, message: "\u0110\xE3 x\xF3a b\u1EA3n ghi th\xE0nh c\xF4ng." });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.post("/api/absences/batch-delete", (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui l\xF2ng ch\u1ECDn \xEDt nh\u1EA5t m\u1ED9t b\u1EA3n ghi h\u1ECDc sinh \u0111\u1EC3 x\xF3a."
+        });
+      }
+      const idSet = new Set(ids.map((v) => String(v)));
+      const records = getAbsences();
+      const remaining = records.filter((r) => !idSet.has(r.id));
+      const deletedCount = records.length - remaining.length;
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y b\u1EA3n ghi b\xE1o v\u1EAFng n\xE0o kh\u1EDBp \u0111\u1EC3 x\xF3a."
+        });
+      }
+      saveAbsences(remaining);
+      return res.json({
+        success: true,
+        deletedCount,
+        message: `\u0110\xE3 x\xF3a th\xE0nh c\xF4ng ${deletedCount} b\u1EA3n ghi b\xE1o v\u1EAFng.`
+      });
     } catch (err) {
       return res.status(500).json({ success: false, message: err.message });
     }

@@ -19,10 +19,13 @@ import {
   FileSpreadsheet,
   ImagePlus,
   Link2,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { ParentAccount } from '../types';
 import { apiFetch } from '../utils/api';
 import { buildParentQrUrl, decodeQrFromImageFile, generateQrDataUrl } from '../utils/qr';
+import { downloadParentExcelTemplate, readSpreadsheetToTabText } from '../utils/excel';
 
 interface ParentManagementProps {
   schoolName?: string;
@@ -37,7 +40,16 @@ interface ParsedParentRow {
 }
 
 function normalizePhoneInput(raw: string): string {
-  return (raw || '').replace(/[\s.\-()]/g, '').trim();
+  const cleaned = (raw || '').replace(/[\s.\-()]/g, '').trim();
+  // Nếu Excel làm mất số 0 đầu của SĐT di động VN (9 chữ số bắt đầu bằng 3/5/7/8/9)
+  if (/^[35789]\d{8}$/.test(cleaned)) {
+    return '0' + cleaned;
+  }
+  return cleaned;
+}
+
+function looksLikeClassName(value: string): boolean {
+  return /^\d{1,2}[A-Za-zÀ-ỹ]{1,4}\d{0,2}$/.test(value.trim());
 }
 
 function parseBatchParentLines(rawText: string): ParsedParentRow[] {
@@ -95,6 +107,17 @@ function parseBatchParentLines(rawText: string): ParsedParentRow[] {
       phone = normalizePhoneInput(parts[2]);
     } else {
       continue;
+    }
+
+    // Tự động sửa nếu cột Tên học sinh và Lớp bị đảo vị trí trong file nguồn
+    if (
+      looksLikeClassName(studentName) &&
+      studentClass.trim().length > 4 &&
+      !looksLikeClassName(studentClass)
+    ) {
+      const tmp = studentName;
+      studentName = studentClass;
+      studentClass = tmp;
     }
 
     if (studentName && phone) {
@@ -206,6 +229,13 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
   const [zaloQrInput, setZaloQrInput] = useState<string>('');
   const [isDecodingZaloAdmin, setIsDecodingZaloAdmin] = useState<boolean>(false);
 
+  // Pagination & Multi-select
+  const PAGE_SIZE = 50;
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+
   // Notifications
   const [toastMessage, setToastMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -233,33 +263,18 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
     loadParents();
   }, []);
 
-  // Generate QR data URLs whenever parents change
+  // Remove stale IDs from selection when parents list changes
   useEffect(() => {
-    let cancelled = false;
-    const buildAll = async () => {
-      const nextMap: Record<string, string> = {};
-      await Promise.all(
-        parents.map(async (p) => {
-          try {
-            const payload = buildParentQrUrl(p.qrToken);
-            nextMap[p.id] = await generateQrDataUrl(payload, 240);
-          } catch {
-            // ignore single item error
-          }
-        })
-      );
-      if (!cancelled) {
-        setQrMap(nextMap);
-      }
-    };
-    if (parents.length > 0) {
-      buildAll();
-    } else {
-      setQrMap({});
-    }
-    return () => {
-      cancelled = true;
-    };
+    const validIds = new Set(parents.map((p) => p.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
   }, [parents]);
 
   const allClasses = useMemo(() => {
@@ -285,6 +300,57 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
       return true;
     });
   }, [parents, selectedClass, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredParents.length / PAGE_SIZE));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedClass]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const paginatedParents = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredParents.slice(start, start + PAGE_SIZE);
+  }, [filteredParents, currentPage]);
+
+  // Generate QR data URLs only for visible page rows (+ previewParent) so 2000+ rows stay instant
+  useEffect(() => {
+    let cancelled = false;
+    const targets = [...paginatedParents];
+    if (previewParent && !targets.some((t) => t.id === previewParent.id)) {
+      targets.push(previewParent);
+    }
+
+    const missing = targets.filter((p) => !qrMap[p.id]);
+    if (missing.length === 0) return;
+
+    const buildVisible = async () => {
+      const updates: Record<string, string> = {};
+      await Promise.all(
+        missing.map(async (p) => {
+          try {
+            const payload = buildParentQrUrl(p.qrToken);
+            updates[p.id] = await generateQrDataUrl(payload, 240);
+          } catch {
+            // ignore single item error
+          }
+        })
+      );
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setQrMap((prev) => ({ ...prev, ...updates }));
+      }
+    };
+
+    buildVisible();
+    return () => {
+      cancelled = true;
+    };
+  }, [paginatedParents, previewParent, qrMap]);
 
   const parsedPreviewCount = useMemo(() => {
     return parseBatchParentLines(batchText).length;
@@ -319,24 +385,27 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
     }
   };
 
-  const handleFileUploadBatch = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUploadBatch = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        setBatchText(reader.result);
-        setBatchNotice('');
-      }
-    };
-    reader.readAsText(file, 'UTF-8');
     e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await readSpreadsheetToTabText(file);
+      if (!text.trim()) {
+        setBatchNotice('Tệp vừa chọn không có dữ liệu hợp lệ.');
+        return;
+      }
+      setBatchText(text);
+      setBatchNotice('');
+    } catch {
+      setBatchNotice('Không thể đọc tệp Excel/CSV. Vui lòng kiểm tra lại định dạng tệp.');
+    }
   };
 
   const handleProcessBatch = async () => {
     setBatchNotice('');
     if (!batchText.trim()) {
-      setBatchNotice('Vui lòng tải tệp CSV/TXT hoặc dán danh sách từ Excel vào ô bên dưới.');
+      setBatchNotice('Vui lòng tải tệp Excel/CSV hoặc dán danh sách từ Excel vào ô bên dưới.');
       return;
     }
 
@@ -375,6 +444,11 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
         method: 'PATCH',
       });
       if (ok && data.success) {
+        setQrMap((prev) => {
+          const copy = { ...prev };
+          delete copy[parent.id];
+          return copy;
+        });
         showToast(data.message || `Đã tạo mã QR mới cho ${parent.studentName}.`);
         loadParents();
       }
@@ -395,6 +469,67 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'Lỗi khi xóa tài khoản phụ huynh.');
+    }
+  };
+
+  const allOnPageSelected =
+    paginatedParents.length > 0 && paginatedParents.every((p) => selectedIds.has(p.id));
+
+  const toggleSelectPage = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnPageSelected) {
+        paginatedParents.forEach((p) => next.delete(p.id));
+      } else {
+        paginatedParents.forEach((p) => next.add(p.id));
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSelectedIds(new Set(filteredParents.map((p) => p.id)));
+  };
+
+  const handleBulkDeleteParents = async () => {
+    if (selectedIds.size === 0) return;
+    setIsBulkDeleting(true);
+    setErrorMessage('');
+    try {
+      const ids = Array.from(selectedIds);
+      const { ok, data } = await apiFetch('/api/parents/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!ok || !data.success) {
+        throw new Error(data.message || 'Không thể xóa hàng loạt tài khoản đã chọn.');
+      }
+      if (previewParent && selectedIds.has(previewParent.id)) {
+        setPreviewParent(null);
+      }
+      setSelectedIds(new Set());
+      setShowBulkDeleteModal(false);
+      if (Array.isArray(data.data)) {
+        setParents(data.data);
+      } else {
+        loadParents();
+      }
+      showToast(data.message || `Đã xóa thành công ${ids.length} học sinh đã chọn.`);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Lỗi khi xóa hàng loạt tài khoản học sinh.');
+      setShowBulkDeleteModal(false);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -610,6 +745,16 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
+              onClick={downloadParentExcelTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-50 border border-teal-200 hover:bg-teal-100 text-teal-800 text-xs font-bold shadow-2xs transition"
+              title="Tải file Excel (.xlsx) mẫu để nhập danh sách phụ huynh"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+              <span>File Excel Mẫu</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setShowBatchModal(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition"
             >
@@ -686,12 +831,57 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
         </div>
       </div>
 
+      {/* Bulk Selection Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-extrabold text-red-900">
+              Đã tích chọn {selectedIds.size} học sinh
+            </span>
+            {filteredParents.length > selectedIds.size && (
+              <button
+                type="button"
+                onClick={handleSelectAllFiltered}
+                className="px-2.5 py-1 rounded-lg bg-white border border-red-200 text-red-700 hover:bg-red-100 font-bold transition"
+              >
+                Chọn tất cả {filteredParents.length} học sinh đang lọc
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition"
+            >
+              Bỏ chọn
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowBulkDeleteModal(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold shadow-sm transition"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Xóa đã chọn ({selectedIds.size})</span>
+          </button>
+        </div>
+      )}
+
       {/* Parents Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                <th className="py-3 px-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectPage}
+                    className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    title="Chọn tất cả học sinh trên trang này"
+                  />
+                </th>
                 <th className="py-3 px-3 text-center w-12">TT</th>
                 <th className="py-3 px-4 min-w-[180px]">Họ tên học sinh</th>
                 <th className="py-3 px-3 text-center w-24">Lớp</th>
@@ -704,18 +894,35 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
             <tbody className="divide-y divide-slate-200">
               {filteredParents.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-10 text-center text-slate-400">
+                  <td colSpan={8} className="py-10 text-center text-slate-400">
                     {isLoading
                       ? 'Đang tải danh sách tài khoản phụ huynh...'
                       : 'Chưa có tài khoản phụ huynh phù hợp. Hãy bấm "Úp Danh Sách Phụ Huynh" để cấp mới.'}
                   </td>
                 </tr>
               ) : (
-                filteredParents.map((p, idx) => {
+                paginatedParents.map((p, idx) => {
                   const qrSrc = qrMap[p.id];
+                  const isSelected = selectedIds.has(p.id);
+                  const rowIndex = (currentPage - 1) * PAGE_SIZE + idx + 1;
                   return (
-                    <tr key={p.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-3 px-3 text-center font-bold text-slate-400">{idx + 1}</td>
+                    <tr
+                      key={p.id}
+                      className={`transition-colors ${
+                        isSelected ? 'bg-blue-50/70' : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectOne(p.id)}
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          aria-label={`Chọn học sinh ${p.studentName}`}
+                        />
+                      </td>
+
+                      <td className="py-3 px-3 text-center font-bold text-slate-400">{rowIndex}</td>
 
                       <td className="py-3 px-4 font-bold text-slate-900">{p.studentName}</td>
 
@@ -815,6 +1022,46 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Bar */}
+        {filteredParents.length > 0 && (
+          <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs">
+            <span className="text-slate-600 font-medium">
+              Hiển thị{' '}
+              <b className="text-slate-900">
+                {(currentPage - 1) * PAGE_SIZE + 1}–
+                {Math.min(currentPage * PAGE_SIZE, filteredParents.length)}
+              </b>{' '}
+              trong tổng số <b className="text-slate-900">{filteredParents.length}</b> học sinh
+            </span>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold disabled:opacity-40 transition"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  <span>Trước</span>
+                </button>
+                <span className="px-2.5 py-1 font-bold text-slate-700">
+                  Trang {currentPage} / {totalPages}
+                </span>
+                <button
+                  type="button"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 font-bold disabled:opacity-40 transition"
+                >
+                  <span>Sau</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* MODAL 1: Add Single Parent */}
@@ -896,7 +1143,7 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
       {showBatchModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
           <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-2xl w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
               <div>
                 <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
                   <Upload className="w-5 h-5 text-blue-600" />
@@ -907,16 +1154,27 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
                 </p>
               </div>
 
-              <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition shrink-0">
-                <FileSpreadsheet className="w-3.5 h-3.5" />
-                <span>Chọn tệp CSV / TXT</span>
-                <input
-                  type="file"
-                  accept=".csv,.txt"
-                  onChange={handleFileUploadBatch}
-                  className="hidden"
-                />
-              </label>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={downloadParentExcelTemplate}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-xs font-bold transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Tải Excel Mẫu</span>
+                </button>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition">
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Chọn tệp Excel / CSV</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={handleFileUploadBatch}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </div>
 
             {batchNotice && (
@@ -1116,6 +1374,45 @@ export const ParentManagement: React.FC<ParentManagementProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 5: Confirm Bulk Delete Parents */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-900 text-center">
+              Xác Nhận Xóa {selectedIds.size} Học Sinh?
+            </h3>
+            <p className="text-xs text-slate-500 text-center mt-2 leading-relaxed">
+              Bạn có chắc chắn muốn xóa <b className="text-slate-900">{selectedIds.size}</b> tài khoản học sinh / phụ huynh đã tích chọn khỏi hệ thống?
+            </p>
+            <p className="text-[11px] text-red-500 text-center mt-1">
+              * Hành động này không thể hoàn tác.
+            </p>
+
+            <div className="flex items-center gap-2 mt-5">
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={handleBulkDeleteParents}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/20 transition disabled:opacity-50"
+              >
+                {isBulkDeleting ? 'Đang xóa...' : `Xác nhận xóa (${selectedIds.size})`}
+              </button>
+            </div>
           </div>
         </div>
       )}

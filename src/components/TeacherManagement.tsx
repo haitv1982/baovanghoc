@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { TeacherAccount } from '../types';
 import { apiFetch } from '../utils/api';
+import { downloadTeacherExcelTemplate, readSpreadsheetToTabText } from '../utils/excel';
 
 interface TeacherManagementProps {
   schoolName?: string;
@@ -112,14 +113,32 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
     }
   };
 
+  // Upload Excel / CSV file into batch textarea
+  const handleFileUploadBatch = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const text = await readSpreadsheetToTabText(file);
+      if (!text.trim()) {
+        setBatchNotice('Tệp vừa chọn không có dữ liệu hợp lệ.');
+        return;
+      }
+      setBatchText(text);
+      setBatchNotice('');
+    } catch {
+      setBatchNotice('Không thể đọc tệp Excel/CSV. Vui lòng kiểm tra lại định dạng tệp.');
+    }
+  };
+
   // Process batch text (TT, Họ tên, Chủ nhiệm lớp)
   const handleProcessBatch = async () => {
     if (!batchText.trim()) {
-      setBatchNotice('Vui lòng dán hoặc nhập danh sách giáo viên.');
+      setBatchNotice('Vui lòng tải tệp Excel hoặc dán danh sách giáo viên.');
       return;
     }
 
-    const lines = batchText.trim().split('\n');
+    const lines = batchText.trim().split(/\r?\n/);
     const items: { name: string; assignedClass: string; orderNumber: number }[] = [];
 
     lines.forEach((line, index) => {
@@ -369,6 +388,16 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              onClick={downloadTeacherExcelTemplate}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-50 border border-teal-200 hover:bg-teal-100 text-teal-800 text-xs font-bold shadow-2xs transition"
+              title="Tải file Excel (.xlsx) mẫu để nhập danh sách giáo viên"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-teal-600" />
+              <span>File Excel Mẫu</span>
+            </button>
+
+            <button
               onClick={() => setShowBatchModal(true)}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-700 hover:to-blue-700 text-white text-xs font-bold shadow-md shadow-indigo-500/20 transition"
               title="Úp hoặc dán danh sách nhiều giáo viên"
@@ -586,8 +615,8 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
       {/* MODAL 2: Batch Upload / Paste Teachers */}
       {showBatchModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-xl w-full shadow-2xl border border-slate-200">
-            <div className="flex items-start justify-between">
+          <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-2xl w-full shadow-2xl border border-slate-200">
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
               <div>
                 <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
                   <Upload className="w-5 h-5 text-indigo-600" />
@@ -596,6 +625,28 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
                 <p className="text-xs text-slate-500 mt-1">
                   Cấu trúc: <b>TT | Họ và tên | Chủ nhiệm lớp</b> (nếu không chủ nhiệm thì bỏ trống).
                 </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={downloadTeacherExcelTemplate}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-xs font-bold transition"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Tải Excel Mẫu</span>
+                </button>
+
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 text-xs font-bold cursor-pointer transition">
+                  <FileSpreadsheet className="w-3.5 h-3.5" />
+                  <span>Chọn tệp Excel / CSV</span>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls,.csv,.txt"
+                    onChange={handleFileUploadBatch}
+                    className="hidden"
+                  />
+                </label>
               </div>
             </div>
 

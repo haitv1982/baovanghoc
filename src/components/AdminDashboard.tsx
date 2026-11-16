@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Calendar,
   Search,
@@ -36,6 +36,7 @@ interface AdminDashboardProps {
   onViewProof: (record: AbsenceRecord) => void;
   onUpdateStatus: (id: string, status: 'approved' | 'noted' | 'pending', adminNote?: string) => Promise<void>;
   onDeleteRecord: (id: string) => Promise<void>;
+  onBatchDeleteRecords?: (ids: string[]) => Promise<void>;
   onRefresh: () => void;
   isRefreshing?: boolean;
   schoolName?: string;
@@ -46,6 +47,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewProof,
   onUpdateStatus,
   onDeleteRecord,
+  onBatchDeleteRecords,
   onRefresh,
   isRefreshing = false,
   schoolName = 'Trường Phổ Thông Tri Thức',
@@ -77,6 +79,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Delete confirmation modal (fixes window.confirm being blocked in iframe)
   const [recordToDelete, setRecordToDelete] = useState<AbsenceRecord | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Multi-select bulk delete
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+
+  useEffect(() => {
+    const validIds = new Set(absences.map((a) => a.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [absences]);
 
   // Extract all distinct classes
   const allClasses = useMemo(() => {
@@ -620,7 +640,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* 4. MAIN DATA TABLE (Exactly meeting all user specifications) */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+        <div className="p-4 bg-slate-50/80 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wide">
               Danh Sách Học Sinh Được Phụ Huynh Báo Vắng
@@ -629,9 +649,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               {filteredRecords.length} kết quả
             </span>
           </div>
-          <span className="text-xs text-slate-400 hidden sm:inline">
-            Click vào nút minh chứng để xem đơn và file Word
-          </span>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="px-2.5 py-1.5 rounded-xl bg-white border border-slate-300 text-slate-600 hover:bg-slate-100 text-xs font-bold transition"
+                >
+                  Bỏ chọn
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkDeleteModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold shadow-xs transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Xóa đã chọn ({selectedIds.size})</span>
+                </button>
+              </>
+            )}
+            <span className="text-xs text-slate-400 hidden sm:inline">
+              Click vào nút minh chứng để xem đơn và file Word
+            </span>
+          </div>
         </div>
 
         {filteredRecords.length === 0 ? (
@@ -657,6 +698,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                  <th className="py-3.5 px-3 text-center w-10">
+                    <input
+                      type="checkbox"
+                      checked={
+                        filteredRecords.length > 0 &&
+                        filteredRecords.every((r) => selectedIds.has(r.id))
+                      }
+                      onChange={() => {
+                        const allSelected =
+                          filteredRecords.length > 0 &&
+                          filteredRecords.every((r) => selectedIds.has(r.id));
+                        if (allSelected) {
+                          setSelectedIds(new Set());
+                        } else {
+                          setSelectedIds(new Set(filteredRecords.map((r) => r.id)));
+                        }
+                      }}
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      title="Chọn tất cả học sinh trong danh sách"
+                    />
+                  </th>
                   <th className="py-3.5 px-3 text-center w-12">Thứ tự</th>
                   <th className="py-3.5 px-3 w-28">Ngày tháng</th>
                   <th className="py-3.5 px-3 text-center w-24">Buổi sáng</th>
@@ -672,11 +734,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               <tbody className="divide-y divide-slate-200">
                 {filteredRecords.map((rec, index) => {
                   const hasProof = Boolean(rec.attachmentName || rec.attachmentData || rec.aiLetter);
+                  const isSelected = selectedIds.has(rec.id);
                   return (
                     <tr
                       key={rec.id}
-                      className="hover:bg-blue-50/40 transition-colors group"
+                      className={`transition-colors group ${
+                        isSelected ? 'bg-blue-50/80' : 'hover:bg-blue-50/40'
+                      }`}
                     >
+                      <td className="py-3.5 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => {
+                            setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(rec.id)) next.delete(rec.id);
+                              else next.add(rec.id);
+                              return next;
+                            });
+                          }}
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          aria-label={`Chọn học sinh ${rec.studentName}`}
+                        />
+                      </td>
+
                       {/* 1. Thứ tự (STT) */}
                       <td className="py-3.5 px-3 text-center font-bold text-slate-500">
                         {index + 1}
@@ -964,6 +1046,60 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 className="flex-1 py-2.5 px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/20 transition disabled:opacity-50"
               >
                 {isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Absences Confirmation Modal */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-900 text-center">
+              Xác Nhận Xóa {selectedIds.size} Bản Ghi?
+            </h3>
+            <p className="text-xs text-slate-500 text-center mt-2 leading-relaxed">
+              Bạn có chắc chắn muốn xóa <b className="text-slate-900">{selectedIds.size}</b> đơn báo vắng học sinh đã tích chọn?
+            </p>
+            <p className="text-[11px] text-red-500 text-center mt-1">
+              * Hành động này sẽ gỡ bỏ các bản ghi đã chọn khỏi hệ thống.
+            </p>
+
+            <div className="flex items-center gap-2 mt-5">
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={async () => {
+                  const ids = Array.from(selectedIds);
+                  if (ids.length === 0) return;
+                  try {
+                    setIsBulkDeleting(true);
+                    if (onBatchDeleteRecords) {
+                      await onBatchDeleteRecords(ids);
+                    } else {
+                      await Promise.all(ids.map((id) => onDeleteRecord(id)));
+                    }
+                    setSelectedIds(new Set());
+                  } finally {
+                    setIsBulkDeleting(false);
+                    setShowBulkDeleteModal(false);
+                  }
+                }}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/20 transition disabled:opacity-50"
+              >
+                {isBulkDeleting ? 'Đang xóa...' : `Xác nhận xóa (${selectedIds.size})`}
               </button>
             </div>
           </div>

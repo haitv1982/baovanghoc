@@ -212,6 +212,25 @@ export default function App() {
     }
   };
 
+  // When admin batch-deletes multiple absence records
+  const handleBatchDeleteRecords = async (ids: string[]) => {
+    try {
+      const { ok, data } = await apiFetch('/api/absences/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (ok && data.success) {
+        const idSet = new Set(ids);
+        setAbsences((prev) => prev.filter((r) => !idSet.has(r.id)));
+      } else {
+        console.error('Batch delete failed:', data.message);
+      }
+    } catch (err) {
+      console.error('Failed to batch delete records:', err);
+    }
+  };
+
   // Filter absences for parent's history
   const parentAbsences = absences.filter(
     (r) => session?.phone && r.parentPhone === session.phone
@@ -300,6 +319,7 @@ export default function App() {
                 onViewProof={(record) => setSelectedProofRecord(record)}
                 onUpdateStatus={handleUpdateStatus}
                 onDeleteRecord={handleDeleteRecord}
+                onBatchDeleteRecords={handleBatchDeleteRecords}
                 onRefresh={loadAbsences}
                 isRefreshing={isRefreshing}
                 schoolName={SCHOOL_NAME}

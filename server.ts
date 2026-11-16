@@ -1027,6 +1027,42 @@ export function createApiApp() {
     }
   });
 
+  app.post('/api/parents/batch-delete', (req: Request, res: Response) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng chọn ít nhất một học sinh / phụ huynh để xóa.',
+        });
+      }
+
+      const idSet = new Set(ids.map((v) => String(v)));
+      const users = getUsers();
+      const remaining = users.filter((u) => !idSet.has(u.id));
+      const deletedCount = users.length - remaining.length;
+
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy tài khoản phụ huynh nào khớp để xóa.',
+        });
+      }
+
+      const reindexed = remaining.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(reindexed);
+
+      return res.json({
+        success: true,
+        deletedCount,
+        data: reindexed,
+        message: `Đã xóa thành công ${deletedCount} tài khoản học sinh / phụ huynh.`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // 2a. Parent QR lookup by phone number (shows issued QR right on Parent login card)
   app.get('/api/auth/parent-qr-lookup', (req: Request, res: Response) => {
     try {
@@ -1435,6 +1471,39 @@ export function createApiApp() {
 
       saveAbsences(records);
       return res.json({ success: true, message: 'Đã xóa bản ghi thành công.' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/absences/batch-delete', (req: Request, res: Response) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng chọn ít nhất một bản ghi học sinh để xóa.',
+        });
+      }
+
+      const idSet = new Set(ids.map((v) => String(v)));
+      const records = getAbsences();
+      const remaining = records.filter((r) => !idSet.has(r.id));
+      const deletedCount = records.length - remaining.length;
+
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy bản ghi báo vắng nào khớp để xóa.',
+        });
+      }
+
+      saveAbsences(remaining);
+      return res.json({
+        success: true,
+        deletedCount,
+        message: `Đã xóa thành công ${deletedCount} bản ghi báo vắng.`,
+      });
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
