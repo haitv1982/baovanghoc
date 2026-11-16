@@ -2,6 +2,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import crypto from 'node:crypto';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
 
@@ -51,6 +52,7 @@ const DATA_FILE = path.join(DATA_DIR, 'absences.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
 const TEACHERS_FILE = path.join(DATA_DIR, 'teachers.json');
+const QR_SESSIONS_FILE = path.join(DATA_DIR, 'qr_sessions.json');
 
 // Initialize Gemini client server-side when API key is configured
 const ai = process.env.GEMINI_API_KEY
@@ -89,9 +91,15 @@ export interface AbsenceRecord {
 }
 
 export interface ParentUser {
+  id: string;
+  orderNumber: number;
+  studentName: string;
+  studentClass: string;
   phone: string;
-  password: string;
-  parentName: string;
+  parentName?: string;
+  password?: string;
+  qrToken: string;
+  zaloQrCode?: string;
   createdAt: string;
 }
 
@@ -228,34 +236,177 @@ function saveAbsences(records: AbsenceRecord[]) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(records, null, 2), 'utf-8');
 }
 
+function normalizePhone(raw: string): string {
+  return (raw || '').replace(/[\s.\-()]/g, '').trim();
+}
+
+function phoneMatches(a: string, b: string): boolean {
+  const na = normalizePhone(a).replace(/^\+?84/, '0');
+  const nb = normalizePhone(b).replace(/^\+?84/, '0');
+  return Boolean(na && nb && na === nb);
+}
+
+function parseZaloOrSystemQr(raw: string):
+  | { kind: 'system_qr'; token: string }
+  | { kind: 'zalo_profile'; profileId: string; raw: string }
+  | { kind: 'zalo_phone'; phone: string }
+  | { kind: 'unknown'; raw: string } {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return { kind: 'unknown', raw: '' };
+
+  // 1. Detect system-issued QR (?parent_qr=... or qr_...)
+  const sysToken = extractQrTokenFromPayload(trimmed);
+  if (trimmed.includes('parent_qr=') || /^qr_[0-9a-zA-Z_]+$/i.test(sysToken)) {
+    return { kind: 'system_qr', token: sysToken };
+  }
+
+  // 2. Detect Zalo Personal Profile QR (https://zalo.me/qr/p/... or https://zaloapp.com/qr/p/...)
+  const profileMatch = trimmed.match(/zalo(?:app)?\.(?:me|com)\/qr\/p\/([A-Za-z0-9_-]+)/i);
+  if (profileMatch?.[1]) {
+    return { kind: 'zalo_profile', profileId: profileMatch[1], raw: trimmed };
+  }
+
+  // 3. Detect Zalo Phone QR or tel/raw phone (https://zalo.me/0987654321, zaloapp.com/qr/0987654321, etc.)
+  const zaloPhoneMatch = trimmed.match(/zalo(?:app)?\.(?:me|com)\/(?:qr\/)?(\+?\d{8,13})(?:[/?#]|$)/i);
+  if (zaloPhoneMatch?.[1]) {
+    return { kind: 'zalo_phone', phone: normalizePhone(zaloPhoneMatch[1]) };
+  }
+
+  const telMatch = trimmed.match(/^tel:(\+?\d{8,13})$/i);
+  if (telMatch?.[1]) {
+    return { kind: 'zalo_phone', phone: normalizePhone(telMatch[1]) };
+  }
+
+  const digitsOnly = normalizePhone(trimmed);
+  if (/^(\+?84|0)\d{8,10}$/.test(digitsOnly)) {
+    return { kind: 'zalo_phone', phone: digitsOnly };
+  }
+
+  return { kind: 'unknown', raw: trimmed };
+}
+
+function generateParentQrToken(phone: string): string {
+  const clean = normalizePhone(phone) || 'ph';
+  const rand = crypto.randomBytes(4).toString('hex');
+  return `qr_${clean}_${rand}`;
+}
+
+function extractQrTokenFromPayload(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  try {
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const url = new URL(trimmed);
+      const t = url.searchParams.get('parent_qr');
+      if (t) return t.trim();
+    }
+  } catch {
+    // ignore
+  }
+  const match = trimmed.match(/parent_qr=([^&\s]+)/i);
+  if (match?.[1]) {
+    return decodeURIComponent(match[1]).trim();
+  }
+  return trimmed;
+}
+
 function getUsers(): ParentUser[] {
+  const defaultUsers: ParentUser[] = [
+    {
+      id: 'par-1',
+      orderNumber: 1,
+      studentName: 'Nguyễn Văn Minh Khang',
+      studentClass: '6A1',
+      phone: '0987654321',
+      parentName: 'Nguyễn Văn Hùng',
+      qrToken: 'qr_0987654321_giailac01',
+      createdAt: '2026-11-09T06:00:00Z',
+    },
+    {
+      id: 'par-2',
+      orderNumber: 2,
+      studentName: 'Trần Bảo Ngọc',
+      studentClass: '7B3',
+      phone: '0912345678',
+      parentName: 'Trần Thị Mai',
+      qrToken: 'qr_0912345678_giailac02',
+      createdAt: '2026-11-09T06:00:00Z',
+    },
+  ];
+
   if (!fs.existsSync(USERS_FILE)) {
-    const defaultUsers: ParentUser[] = [
-      {
-        phone: '0987654321',
-        password: '123',
-        parentName: 'Nguyễn Văn Hùng',
-        createdAt: new Date().toISOString(),
-      },
-      {
-        phone: '0912345678',
-        password: '123',
-        parentName: 'Trần Thị Mai',
-        createdAt: new Date().toISOString(),
-      },
-    ];
     fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2), 'utf-8');
     return defaultUsers;
   }
   try {
-    return JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'));
+    const rawList: any[] = JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8'));
+    let needsSave = false;
+    const migrated: ParentUser[] = rawList.map((u, idx) => {
+      const cleanPhone = normalizePhone(u.phone || '');
+      const hasAllFields = Boolean(u.id && u.qrToken && u.studentName !== undefined && u.orderNumber);
+      if (!hasAllFields) needsSave = true;
+      return {
+        id: u.id || `par-${idx + 1}-${cleanPhone || Date.now()}`,
+        orderNumber: u.orderNumber || idx + 1,
+        studentName: (u.studentName || u.parentName || `Học sinh (${cleanPhone.slice(-4)})`).normalize('NFC'),
+        studentClass: (u.studentClass || '').normalize('NFC'),
+        phone: cleanPhone,
+        parentName: (u.parentName || '').normalize('NFC'),
+        password: u.password,
+        qrToken: u.qrToken || generateParentQrToken(cleanPhone),
+        zaloQrCode: u.zaloQrCode || '',
+        createdAt: u.createdAt || new Date().toISOString(),
+      };
+    });
+    if (needsSave) {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(migrated, null, 2), 'utf-8');
+    }
+    return migrated;
   } catch {
-    return [];
+    return defaultUsers;
   }
 }
 
 function saveUsers(users: ParentUser[]) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), 'utf-8');
+}
+
+interface QrLoginSessionRecord {
+  sessionId: string;
+  status: 'pending' | 'confirmed';
+  createdAt: number;
+  confirmedAt?: number;
+  user?: {
+    role: 'parent';
+    phone: string;
+    name: string;
+    studentName: string;
+    studentClass: string;
+  };
+  token?: string;
+}
+
+const QR_SESSION_TTL_MS = 15 * 60 * 1000;
+
+function getQrSessions(): Record<string, QrLoginSessionRecord> {
+  if (!fs.existsSync(QR_SESSIONS_FILE)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(QR_SESSIONS_FILE, 'utf-8')) || {};
+    const now = Date.now();
+    const cleaned: Record<string, QrLoginSessionRecord> = {};
+    for (const [k, v] of Object.entries<any>(raw)) {
+      if (v && typeof v.createdAt === 'number' && now - v.createdAt < QR_SESSION_TTL_MS) {
+        cleaned[k] = v;
+      }
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function saveQrSessions(sessions: Record<string, QrLoginSessionRecord>) {
+  fs.writeFileSync(QR_SESSIONS_FILE, JSON.stringify(sessions, null, 2), 'utf-8');
 }
 
 function getAdmin(): AdminAccount {
@@ -682,64 +833,442 @@ export function createApiApp() {
     }
   });
 
-  // 2. Parent login or first-time setup
-  app.post('/api/auth/parent-auth', (req: Request, res: Response) => {
-    const { phone, password, parentName } = req.body;
-    if (!phone || !phone.trim()) {
-      return res.status(400).json({ success: false, message: 'Vui lòng nhập số điện thoại phụ huynh' });
+  // 1i. Parent Accounts CRUD & QR Provisioning (Admin)
+  app.get('/api/parents', (_req: Request, res: Response) => {
+    try {
+      const users = getUsers();
+      return res.json({ success: true, data: users });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
     }
+  });
 
-    const cleanPhone = phone.trim();
-    const cleanPass = (password || '').trim();
-    const users = getUsers();
-    const existing = users.find((u) => u.phone === cleanPhone);
+  app.post('/api/parents', (req: Request, res: Response) => {
+    try {
+      const { studentName, studentClass, phone, zaloQrCode } = req.body;
+      const cleanPhone = normalizePhone(phone || '');
+      const cleanStudent = (studentName || '').trim().normalize('NFC');
+      const cleanClass = (studentClass || '').trim().normalize('NFC');
+      const cleanZaloQr = (zaloQrCode || '').trim();
 
-    if (!cleanPass) {
-      return res.status(400).json({ success: false, message: 'Vui lòng nhập mật khẩu' });
-    }
-
-    if (existing) {
-      // Check password
-      if (existing.password === cleanPass) {
-        return res.json({
-          success: true,
-          isFirstTime: false,
-          user: {
-            role: 'parent',
-            phone: existing.phone,
-            name: existing.parentName,
-          },
-          token: 'token-parent-' + cleanPhone,
-        });
-      } else {
-        return res.status(401).json({
+      if (!cleanStudent || !cleanClass || !cleanPhone) {
+        return res.status(400).json({
           success: false,
-          message: 'Mật khẩu không chính xác cho số điện thoại này.',
+          message: 'Vui lòng nhập đầy đủ họ tên học sinh, lớp và số điện thoại phụ huynh.',
         });
       }
-    } else {
-      // First time login: create account with entered password and name
-      const newUser: ParentUser = {
+
+      const users = getUsers();
+      const existingIdx = users.findIndex((u) => phoneMatches(u.phone, cleanPhone));
+
+      if (existingIdx !== -1) {
+        users[existingIdx] = {
+          ...users[existingIdx],
+          studentName: cleanStudent,
+          studentClass: cleanClass,
+          phone: cleanPhone,
+          qrToken: users[existingIdx].qrToken || generateParentQrToken(cleanPhone),
+          zaloQrCode: cleanZaloQr || users[existingIdx].zaloQrCode || '',
+        };
+        saveUsers(users);
+        return res.json({
+          success: true,
+          data: users[existingIdx],
+          message: `Đã cập nhật thông tin & giữ nguyên mã QR cho SĐT ${cleanPhone}.`,
+        });
+      }
+
+      const newParent: ParentUser = {
+        id: 'par-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+        orderNumber: users.length + 1,
+        studentName: cleanStudent,
+        studentClass: cleanClass,
         phone: cleanPhone,
-        password: cleanPass,
-        parentName: parentName?.trim() || `Phụ huynh (${cleanPhone.slice(-4)})`,
+        qrToken: generateParentQrToken(cleanPhone),
+        zaloQrCode: cleanZaloQr,
         createdAt: new Date().toISOString(),
       };
-      users.push(newUser);
+
+      users.push(newParent);
       saveUsers(users);
+
+      return res.status(201).json({
+        success: true,
+        data: newParent,
+        message: 'Đã cấp tài khoản phụ huynh và sinh mã QR thành công!',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post('/api/parents/batch', (req: Request, res: Response) => {
+    try {
+      const { items } = req.body; // Array of { orderNumber?, studentName, studentClass, phone, zaloQrCode? }
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Danh sách phụ huynh không hợp lệ hoặc rỗng.',
+        });
+      }
+
+      const users = getUsers();
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      for (const item of items) {
+        const cleanStudent = (item.studentName || '').trim().normalize('NFC');
+        const cleanClass = (item.studentClass || '').trim().normalize('NFC');
+        const cleanPhone = normalizePhone(item.phone || '');
+        const cleanZaloQr = (item.zaloQrCode || '').trim();
+
+        if (!cleanStudent || !cleanPhone) continue;
+
+        const existingIdx = users.findIndex((u) => phoneMatches(u.phone, cleanPhone));
+        if (existingIdx !== -1) {
+          users[existingIdx] = {
+            ...users[existingIdx],
+            studentName: cleanStudent,
+            studentClass: cleanClass || users[existingIdx].studentClass,
+            qrToken: users[existingIdx].qrToken || generateParentQrToken(cleanPhone),
+            zaloQrCode: cleanZaloQr || users[existingIdx].zaloQrCode || '',
+          };
+          updatedCount++;
+        } else {
+          users.push({
+            id: 'par-' + Date.now() + '-' + Math.floor(Math.random() * 10000),
+            orderNumber: users.length + 1,
+            studentName: cleanStudent,
+            studentClass: cleanClass,
+            phone: cleanPhone,
+            qrToken: generateParentQrToken(cleanPhone),
+            zaloQrCode: cleanZaloQr,
+            createdAt: new Date().toISOString(),
+          });
+          addedCount++;
+        }
+      }
+
+      const reindexed = users.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(reindexed);
 
       return res.json({
         success: true,
-        isFirstTime: true,
-        message: 'Đăng ký mật khẩu lần đầu thành công!',
+        addedCount,
+        updatedCount,
+        count: addedCount + updatedCount,
+        data: reindexed,
+        message: `Đã cấp tài khoản & sinh mã QR cho ${addedCount} phụ huynh mới${
+          updatedCount > 0 ? ` (cập nhật ${updatedCount} SĐT đã có)` : ''
+        }!`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.patch('/api/parents/:id/zalo-qr', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { zaloQrCode } = req.body;
+      const users = getUsers();
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản phụ huynh.' });
+      }
+      users[idx].zaloQrCode = (zaloQrCode || '').trim();
+      saveUsers(users);
+      return res.json({
+        success: true,
+        data: users[idx],
+        message: users[idx].zaloQrCode
+          ? `Đã gắn mã QR Zalo cá nhân cho phụ huynh em ${users[idx].studentName}.`
+          : `Đã gỡ mã QR Zalo cá nhân của em ${users[idx].studentName}.`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.patch('/api/parents/:id/regenerate-qr', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const users = getUsers();
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản phụ huynh.' });
+      }
+      users[idx].qrToken = generateParentQrToken(users[idx].phone);
+      saveUsers(users);
+      return res.json({
+        success: true,
+        data: users[idx],
+        message: `Đã cấp lại mã QR mới cho SĐT ${users[idx].phone}.`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.delete('/api/parents/:id', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      let users = getUsers();
+      const initialLen = users.length;
+      users = users.filter((u) => u.id !== id);
+      if (users.length === initialLen) {
+        return res.status(404).json({ success: false, message: 'Không tìm thấy tài khoản phụ huynh để xóa.' });
+      }
+      users = users.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(users);
+      return res.json({ success: true, message: 'Đã xóa tài khoản phụ huynh thành công.' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // 2a. Parent QR lookup by phone number (shows issued QR right on Parent login card)
+  app.get('/api/auth/parent-qr-lookup', (req: Request, res: Response) => {
+    try {
+      const cleanPhone = normalizePhone(String(req.query.phone || ''));
+      if (!cleanPhone) {
+        return res.json({ success: true, found: false });
+      }
+      const users = getUsers();
+      const account = users.find((u) => normalizePhone(u.phone) === cleanPhone);
+      if (!account) {
+        return res.json({ success: true, found: false });
+      }
+      return res.json({
+        success: true,
+        found: true,
+        account: {
+          id: account.id,
+          studentName: account.studentName,
+          studentClass: account.studentClass,
+          phone: account.phone,
+          qrToken: account.qrToken,
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // 2b. Create a desktop QR login challenge session
+  app.post('/api/auth/qr-session', (_req: Request, res: Response) => {
+    try {
+      const sessionId = 'qrs_' + crypto.randomBytes(10).toString('hex');
+      const sessions = getQrSessions();
+      sessions[sessionId] = {
+        sessionId,
+        status: 'pending',
+        createdAt: Date.now(),
+      };
+      saveQrSessions(sessions);
+      return res.json({ success: true, sessionId });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // 2c. Poll desktop QR login session status
+  app.get('/api/auth/qr-session-status', (req: Request, res: Response) => {
+    try {
+      const sessionId = String(req.query.sessionId || '').trim();
+      if (!sessionId) {
+        return res.status(400).json({ success: false, status: 'invalid' });
+      }
+      const sessions = getQrSessions();
+      const sess = sessions[sessionId];
+      if (!sess) {
+        return res.json({ success: true, status: 'expired' });
+      }
+      if (sess.status === 'confirmed' && sess.user && sess.token) {
+        return res.json({
+          success: true,
+          status: 'confirmed',
+          user: sess.user,
+          token: sess.token,
+        });
+      }
+      return res.json({ success: true, status: 'pending' });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // 2d. Confirm desktop QR session from phone (Zalo scan opens URL with ?parent_qr=...&qr_session=...)
+  app.post('/api/auth/parent-qr-confirm', (req: Request, res: Response) => {
+    try {
+      const { qrData, sessionId } = req.body;
+      const extracted = extractQrTokenFromPayload(String(qrData || ''));
+      if (!extracted) {
+        return res.status(400).json({
+          success: false,
+          message: 'Mã QR không hợp lệ.',
+        });
+      }
+
+      const users = getUsers();
+      const matched = users.find((u) => u.qrToken === extracted);
+      if (!matched) {
+        return res.status(401).json({
+          success: false,
+          message:
+            'Mã QR chưa được Admin nhà trường cấp tài khoản hoặc đã bị thu hồi.',
+        });
+      }
+
+      const userPayload = {
+        role: 'parent' as const,
+        phone: matched.phone,
+        name: matched.parentName || `Phụ huynh em ${matched.studentName}`,
+        studentName: matched.studentName,
+        studentClass: matched.studentClass,
+      };
+      const token = 'token-parent-' + matched.phone;
+
+      const cleanSessionId = String(sessionId || '').trim();
+      let confirmedDesktop = false;
+      if (cleanSessionId && cleanSessionId.startsWith('qrs_')) {
+        const sessions = getQrSessions();
+        const existingSess = sessions[cleanSessionId];
+        sessions[cleanSessionId] = {
+          sessionId: cleanSessionId,
+          status: 'confirmed',
+          createdAt: existingSess?.createdAt || Date.now(),
+          confirmedAt: Date.now(),
+          user: userPayload,
+          token,
+        };
+        saveQrSessions(sessions);
+        confirmedDesktop = true;
+      }
+
+      return res.json({
+        success: true,
+        confirmedDesktop,
+        user: userPayload,
+        token,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // 2e. Direct Parent QR Login
+  // When mode === 'zalo_image': ONLY accept parent's personal Zalo QR (phone or linked zalo.me/qr/p/...),
+  // explicitly reject system login/registration QRs (?parent_qr= / qr_...).
+  app.post('/api/auth/parent-qr-login', (req: Request, res: Response) => {
+    try {
+      const { qrData, mode } = req.body;
+      const rawInput = String(qrData || '').trim();
+      if (!rawInput) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng cung cấp ảnh hoặc mã QR hợp lệ để đăng nhập.',
+        });
+      }
+
+      const users = getUsers();
+      const parsed = parseZaloOrSystemQr(rawInput);
+
+      if (mode === 'zalo_image') {
+        if (parsed.kind === 'system_qr') {
+          return res.status(400).json({
+            success: false,
+            message:
+              'Đây là mã QR hệ thống khi nhập SĐT. Để đăng nhập bằng ảnh QR, vui lòng chọn ảnh Mã QR Zalo cá nhân của phụ huynh.',
+          });
+        }
+
+        let matched: ParentUser | undefined;
+        if (parsed.kind === 'zalo_phone') {
+          matched = users.find((u) => phoneMatches(u.phone, parsed.phone));
+          if (!matched) {
+            return res.status(401).json({
+              success: false,
+              message: `Số điện thoại ${parsed.phone} trong mã QR Zalo chưa được nhà trường cấp tài khoản.`,
+            });
+          }
+        } else if (parsed.kind === 'zalo_profile') {
+          matched = users.find((u) => {
+            if (!u.zaloQrCode) return false;
+            const linked = parseZaloOrSystemQr(u.zaloQrCode);
+            return (
+              linked.kind === 'zalo_profile' &&
+              linked.profileId.toLowerCase() === parsed.profileId.toLowerCase()
+            );
+          });
+          if (!matched) {
+            return res.status(401).json({
+              success: false,
+              message:
+                'Mã QR Zalo cá nhân (zalo.me/qr/p/...) ẩn số điện thoại nên chưa khớp được với SĐT học sinh. Vui lòng gửi ảnh mã QR Zalo này cho Giáo viên hoặc Admin gắn vào tài khoản SĐT của phụ huynh.',
+            });
+          }
+        } else {
+          matched = users.find(
+            (u) => u.zaloQrCode && u.zaloQrCode.trim() === rawInput
+          );
+          if (!matched) {
+            return res.status(400).json({
+              success: false,
+              message:
+                'Ảnh tải lên không phải là mã QR Zalo cá nhân hợp lệ của phụ huynh đã đăng ký.',
+            });
+          }
+        }
+
+        return res.json({
+          success: true,
+          user: {
+            role: 'parent',
+            phone: matched.phone,
+            name: matched.parentName || `Phụ huynh em ${matched.studentName}`,
+            studentName: matched.studentName,
+            studentClass: matched.studentClass,
+          },
+          token: 'token-parent-' + matched.phone,
+        });
+      }
+
+      // Non-image fallback (e.g., direct ?parent_qr= URL)
+      const extracted = extractQrTokenFromPayload(rawInput);
+      const matched = users.find((u) => u.qrToken === extracted);
+
+      if (!matched) {
+        return res.status(401).json({
+          success: false,
+          message:
+            'Mã QR không hợp lệ hoặc chưa được Admin nhà trường cấp tài khoản. Vui lòng liên hệ nhà trường để được cấp lại.',
+        });
+      }
+
+      return res.json({
+        success: true,
         user: {
           role: 'parent',
-          phone: newUser.phone,
-          name: newUser.parentName,
+          phone: matched.phone,
+          name: matched.parentName || `Phụ huynh em ${matched.studentName}`,
+          studentName: matched.studentName,
+          studentClass: matched.studentClass,
         },
-        token: 'token-parent-' + cleanPhone,
+        token: 'token-parent-' + matched.phone,
       });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
     }
+  });
+
+  // 2f. Disable phone-only login without QR verification
+  app.post('/api/auth/parent-auth', (_req: Request, res: Response) => {
+    return res.status(403).json({
+      success: false,
+      message:
+        'Hệ thống không cho phép vào chỉ bằng số điện thoại. Vui lòng quét mã QR bằng Zalo hoặc đăng nhập bằng ảnh QR.',
+    });
   });
 
   // 3. Get all absences with filters
@@ -1062,6 +1591,49 @@ Yêu cầu:
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });
     }
+  });
+
+  // Instant silent confirmation handler when phone opens ?parent_qr=...&qr_session=... from Zalo
+  app.get('/', (req: Request, res: Response, next: NextFunction) => {
+    const parentQr = typeof req.query.parent_qr === 'string' ? req.query.parent_qr.trim() : '';
+    const qrSession = typeof req.query.qr_session === 'string' ? req.query.qr_session.trim() : '';
+
+    if (!parentQr || !qrSession || !qrSession.startsWith('qrs_')) {
+      return next();
+    }
+
+    try {
+      const extracted = extractQrTokenFromPayload(parentQr);
+      const users = getUsers();
+      const matched = users.find((u) => u.qrToken === extracted);
+      if (matched) {
+        const sessions = getQrSessions();
+        const existingSess = sessions[qrSession];
+        sessions[qrSession] = {
+          sessionId: qrSession,
+          status: 'confirmed',
+          createdAt: existingSess?.createdAt || Date.now(),
+          confirmedAt: Date.now(),
+          user: {
+            role: 'parent',
+            phone: matched.phone,
+            name: matched.parentName || `Phụ huynh em ${matched.studentName}`,
+            studentName: matched.studentName,
+            studentClass: matched.studentClass,
+          },
+          token: 'token-parent-' + matched.phone,
+        };
+        saveQrSessions(sessions);
+      }
+    } catch {
+      // ignore error and proceed quietly
+    }
+
+    // Minimal silent HTML on phone (attempts auto-close, no notification/prompt shown)
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(
+      '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title></head><body style="margin:0;background:#ffffff;"><script>try{window.close();}catch(e){}try{if(window.history.length>1)window.history.back();}catch(e){}</script></body></html>'
+    );
   });
 
   // Health check endpoint (for Render.com & cloud platforms)

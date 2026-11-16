@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   School,
   User,
@@ -10,27 +10,50 @@ import {
   AlertCircle,
   CheckCircle2,
   LogIn,
+  QrCode,
+  ImagePlus,
+  Loader2,
+  Smartphone,
 } from 'lucide-react';
 import { UserSession } from '../types';
 import { apiFetch } from '../utils/api';
+import {
+  buildParentQrUrl,
+  decodeQrFromImageFile,
+  generateQrDataUrl,
+} from '../utils/qr';
 
 interface AuthModalProps {
   onLoginSuccess: (session: UserSession) => void;
   defaultRole?: 'admin' | 'parent' | 'teacher';
   schoolName?: string;
+  initialError?: string;
+}
+
+interface LookedUpParent {
+  id: string;
+  studentName: string;
+  studentClass: string;
+  phone: string;
+  qrToken: string;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   onLoginSuccess,
   defaultRole = 'parent',
   schoolName = 'Trường THCS Giai Lạc',
+  initialError = '',
 }) => {
   const [role, setRole] = useState<'admin' | 'parent' | 'teacher'>(defaultRole);
 
   // Form states
   const [parentPhone, setParentPhone] = useState<string>('');
-  const [parentPassword, setParentPassword] = useState<string>('');
-  const [parentName, setParentName] = useState<string>('');
+  const [lookedUpParent, setLookedUpParent] = useState<LookedUpParent | null>(null);
+  const [issuedQrImage, setIssuedQrImage] = useState<string>('');
+  const [qrSessionId, setQrSessionId] = useState<string>('');
+  const [lookupStatus, setLookupStatus] = useState<'idle' | 'loading' | 'found' | 'not_found'>('idle');
+  const [isDecodingQr, setIsDecodingQr] = useState<boolean>(false);
+  const qrFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [adminUsername, setAdminUsername] = useState<string>('');
   const [adminPassword, setAdminPassword] = useState<string>('');
@@ -40,57 +63,187 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
   // UI state
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>(initialError);
   const [successNotice, setSuccessNotice] = useState<string>('');
 
-  // 1. Parent Auth
-  const handleParentAuth = async (e: React.FormEvent) => {
+  useEffect(() => {
+    if (initialError) {
+      setErrorMessage(initialError);
+    }
+  }, [initialError]);
+
+  // Automatically lookup parent QR code + create a desktop QR challenge session
+  useEffect(() => {
+    const clean = parentPhone.replace(/[\s.\-()]/g, '').trim();
+    if (clean.length < 9) {
+      setLookedUpParent(null);
+      setIssuedQrImage('');
+      setQrSessionId('');
+      setLookupStatus('idle');
+      return;
+    }
+
+    let cancelled = false;
+    setLookupStatus('loading');
+
+    const timer = setTimeout(async () => {
+      try {
+        const { ok, data } = await apiFetch(
+          `/api/auth/parent-qr-lookup?phone=${encodeURIComponent(clean)}`
+        );
+        if (cancelled) return;
+
+        if (ok && data.success && data.found && data.account) {
+          const sessRes = await apiFetch('/api/auth/qr-session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (cancelled) return;
+
+          const activeSessionId =
+            sessRes.ok && sessRes.data?.success ? String(sessRes.data.sessionId) : '';
+
+          setLookedUpParent(data.account);
+          setQrSessionId(activeSessionId);
+          setLookupStatus('found');
+
+          const qrUrl = buildParentQrUrl(data.account.qrToken, activeSessionId || undefined);
+          const pngDataUrl = await generateQrDataUrl(qrUrl, 240);
+          if (!cancelled) {
+            setIssuedQrImage(pngDataUrl);
+          }
+        } else {
+          setLookedUpParent(null);
+          setIssuedQrImage('');
+          setQrSessionId('');
+          setLookupStatus('not_found');
+        }
+      } catch {
+        if (!cancelled) {
+          setLookedUpParent(null);
+          setIssuedQrImage('');
+          setQrSessionId('');
+          setLookupStatus('idle');
+        }
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [parentPhone]);
+
+  // Poll server while desktop QR code is shown so Zalo scan on phone logs the computer in
+  useEffect(() => {
+    if (role !== 'parent' || lookupStatus !== 'found' || !qrSessionId) return;
+
+    let cancelled = false;
+    const intervalId = setInterval(async () => {
+      try {
+        const { ok, data } = await apiFetch(
+          `/api/auth/qr-session-status?sessionId=${encodeURIComponent(qrSessionId)}`
+        );
+        if (cancelled) return;
+
+        if (ok && data.success && data.status === 'confirmed' && data.user) {
+          clearInterval(intervalId);
+          const session: UserSession = {
+            role: 'parent',
+            name: data.user.name,
+            phone: data.user.phone,
+            studentName: data.user.studentName,
+            studentClass: data.user.studentClass,
+            token: data.token,
+          };
+          setSuccessNotice(
+            `Đã xác nhận quét mã QR từ Zalo (${data.user.studentName})! Đang đăng nhập...`
+          );
+          setTimeout(() => {
+            if (!cancelled) onLoginSuccess(session);
+          }, 300);
+        } else if (ok && data.status === 'expired') {
+          // Refresh QR session seamlessly if expired after 15 mins
+          const refreshRes = await apiFetch('/api/auth/qr-session', { method: 'POST' });
+          if (!cancelled && refreshRes.ok && refreshRes.data?.sessionId && lookedUpParent) {
+            const newId = String(refreshRes.data.sessionId);
+            setQrSessionId(newId);
+            const qrUrl = buildParentQrUrl(lookedUpParent.qrToken, newId);
+            const pngDataUrl = await generateQrDataUrl(qrUrl, 240);
+            if (!cancelled) setIssuedQrImage(pngDataUrl);
+          }
+        }
+      } catch {
+        // ignore transient polling error
+      }
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [role, lookupStatus, qrSessionId, lookedUpParent, onLoginSuccess]);
+
+  // Prevent submitting phone-only form without QR scan
+  const handleParentFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
-    setSuccessNotice('');
-
     if (!parentPhone.trim()) {
-      setErrorMessage('Vui lòng nhập số điện thoại phụ huynh');
+      setErrorMessage('Vui lòng nhập số điện thoại để hiển thị mã QR hoặc bấm Đăng nhập bằng ảnh QR.');
       return;
     }
-    if (!parentPassword.trim()) {
-      setErrorMessage('Vui lòng nhập mật khẩu (tự tạo nếu vào lần đầu)');
-      return;
+    if (lookupStatus === 'found') {
+      setErrorMessage(
+        'Vui lòng mở Zalo trên điện thoại để quét mã QR trên màn hình, hoặc bấm "Đăng nhập bằng ảnh QR".'
+      );
     }
+  };
 
-    setIsLoading(true);
+  // 1b. Parent Login by Zalo Personal QR Image upload
+  const handleQrImageSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    setErrorMessage('');
+    setSuccessNotice('');
+    setIsDecodingQr(true);
+
     try {
-      const { ok, data } = await apiFetch('/api/auth/parent-auth', {
+      const decodedText = await decodeQrFromImageFile(file);
+
+      if (!decodedText.trim()) {
+        throw new Error('Không đọc được mã QR hợp lệ từ ảnh đã chọn.');
+      }
+
+      const { ok, data } = await apiFetch('/api/auth/parent-qr-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          phone: parentPhone.trim(),
-          password: parentPassword.trim(),
-          parentName: parentName.trim(),
-        }),
+        body: JSON.stringify({ qrData: decodedText.trim(), mode: 'zalo_image' }),
       });
 
       if (!ok || !data.success) {
-        throw new Error(data.message || 'Đăng nhập không thành công');
+        throw new Error(data.message || 'Mã QR Zalo cá nhân không hợp lệ hoặc chưa được cấp.');
       }
 
       const session: UserSession = {
         role: 'parent',
         name: data.user.name,
         phone: data.user.phone,
+        studentName: data.user.studentName,
+        studentClass: data.user.studentClass,
         token: data.token,
       };
 
-      if (data.isFirstTime) {
-        setSuccessNotice('Tạo mật khẩu lần đầu thành công! Đang chuyển vào hệ thống...');
-        setTimeout(() => onLoginSuccess(session), 800);
-      } else {
-        onLoginSuccess(session);
-      }
+      setSuccessNotice(`Xác thực QR Zalo thành công (${data.user.studentName})! Đang vào hệ thống...`);
+      setTimeout(() => onLoginSuccess(session), 350);
     } catch (err: any) {
-      setErrorMessage(err.message || 'Lỗi kết nối máy chủ');
+      setErrorMessage(
+        err?.message ||
+          'Không nhận diện được mã QR Zalo cá nhân trong ảnh. Vui lòng chọn ảnh Mã QR Zalo cá nhân của phụ huynh.'
+      );
     } finally {
-      setIsLoading(false);
+      setIsDecodingQr(false);
     }
   };
 
@@ -364,77 +517,122 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </form>
             )}
 
-            {/* 2. PARENT FORM */}
+            {/* 2. PARENT FORM (QR-only authentication: Zalo scan logs desktop in, or upload QR image on phone) */}
             {role === 'parent' && (
-              <form onSubmit={handleParentAuth} className="space-y-4">
+              <form onSubmit={handleParentFormSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Số điện thoại phụ huynh <span className="text-red-500">*</span>
+                    Số điện thoại phụ huynh để lấy mã QR
                   </label>
                   <div className="relative">
                     <Phone className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="tel"
-                      required
                       value={parentPhone}
-                      onChange={(e) => setParentPhone(e.target.value)}
-                      placeholder="VD: 0987654321"
+                      onChange={(e) => {
+                        setParentPhone(e.target.value);
+                        setErrorMessage('');
+                      }}
+                      placeholder="Nhập SĐT đã cấp để hiển thị mã QR (VD: 0987654321)"
                       className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 font-semibold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 shadow-2xs"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <label className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                      Mật khẩu <span className="text-red-500">*</span>
-                    </label>
-                    <span className="text-[11px] text-blue-600 font-medium">
-                      (Tự đặt nếu vào lần đầu)
-                    </span>
+                {/* Live Issued QR Code Box */}
+                {lookupStatus === 'loading' && (
+                  <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center gap-2 text-xs text-slate-500">
+                    <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                    <span>Đang tạo phiên đăng nhập QR...</span>
                   </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="password"
-                      required
-                      value={parentPassword}
-                      onChange={(e) => setParentPassword(e.target.value)}
-                      placeholder="Nhập hoặc tạo mật khẩu của bạn"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 font-semibold text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 shadow-2xs"
-                    />
+                )}
+
+                {lookupStatus === 'found' && lookedUpParent && issuedQrImage && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-b from-blue-50/80 to-indigo-50/50 border border-blue-200 text-center space-y-2.5 animate-in fade-in">
+                    <div className="flex items-center justify-center">
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Đang chờ quét QR bằng Zalo trên điện thoại...
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-slate-800">
+                      <p className="font-extrabold text-slate-900 text-sm">
+                        Học sinh: {lookedUpParent.studentName}
+                      </p>
+                      <p className="text-slate-600 font-semibold">
+                        Lớp {lookedUpParent.studentClass || '---'} • SĐT:{' '}
+                        <span className="font-mono text-blue-700">{lookedUpParent.phone}</span>
+                      </p>
+                    </div>
+
+                    <div className="inline-block p-2.5 bg-white rounded-2xl border-2 border-white shadow-md">
+                      <img
+                        src={issuedQrImage}
+                        alt={`Mã QR đăng nhập ${lookedUpParent.phone}`}
+                        className="w-44 h-44 mx-auto"
+                      />
+                    </div>
+
+                    <p className="text-[11px] text-slate-700 leading-relaxed">
+                      📱 Mở <b>Zalo</b> trên điện thoại và quét mã QR này — sau ~1 giây <b>trình duyệt máy tính sẽ tự động đăng nhập thẳng vào cổng Phụ huynh</b>.
+                    </p>
                   </div>
-                </div>
+                )}
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Họ và tên Phụ huynh (tùy chọn)
-                  </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={parentName}
-                      onChange={(e) => setParentName(e.target.value)}
-                      placeholder="VD: Nguyễn Văn Hùng"
-                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 font-medium text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-blue-600 shadow-2xs"
-                    />
+                {lookupStatus === 'not_found' && (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-[11px] text-amber-900 leading-relaxed">
+                    ⚠️ Số điện thoại này chưa được Admin nhà trường cấp tài khoản & mã QR. Vui lòng kiểm tra lại SĐT hoặc liên hệ Giáo viên chủ nhiệm / Admin.
                   </div>
-                </div>
+                )}
 
-                <div className="p-3 bg-blue-50/70 rounded-xl border border-blue-100 text-[11px] text-blue-900 leading-relaxed">
-                  💡 Nếu đây là lần đầu đăng nhập, bạn chỉ cần nhập số điện thoại và mật khẩu mong muốn, hệ thống sẽ tự động đăng ký tài khoản cho bạn ngay lập tức!
-                </div>
+                {lookupStatus === 'idle' && (
+                  <div className="p-3.5 bg-blue-50/70 rounded-xl border border-blue-100 text-[11px] text-blue-900 leading-relaxed space-y-1.5">
+                    <p className="font-bold flex items-center gap-1.5">
+                      <QrCode className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span>Hướng dẫn đăng nhập Phụ huynh:</span>
+                    </p>
+                    <p>
+                      1. <b>Quét trên máy tính:</b> Nhập SĐT đã cấp để hiện <b>Mã QR</b>, dùng <b>Zalo</b> trên điện thoại quét mã QR này để vào hệ thống trên máy tính.
+                    </p>
+                    <p>
+                      2. <b>Đăng nhập bằng ảnh QR:</b> Bấm nút bên dưới để chọn ảnh <b>Mã QR Zalo cá nhân</b> của số điện thoại phụ huynh (không dùng ảnh mã QR màn hình đăng nhập).
+                    </p>
+                  </div>
+                )}
 
-                {/* Thay nút vào hệ thống báo nghỉ bằng Vào hệ thống */}
+                {/* Hidden File Input for Zalo Personal QR Upload */}
+                <input
+                  ref={qrFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleQrImageSelected}
+                  className="hidden"
+                />
+
                 <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-blue-500/20 transition-all disabled:opacity-50 mt-2"
+                  type="button"
+                  disabled={isLoading || isDecodingQr}
+                  onClick={() => qrFileInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs sm:text-sm shadow-md shadow-emerald-500/20 transition-all disabled:opacity-50"
                 >
-                  <span>VÀO HỆ THỐNG</span>
-                  <ArrowRight className="w-4 h-4" />
+                  {isDecodingQr ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>ĐANG ĐỌC MÃ QR ZALO...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ImagePlus className="w-4 h-4" />
+                      <span>ĐĂNG NHẬP BẰNG ẢNH QR ZALO</span>
+                    </>
+                  )}
                 </button>
+
+                <p className="text-[11px] text-center text-slate-500 flex items-center justify-center gap-1">
+                  <Smartphone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span>Chỉ dùng ảnh Mã QR Zalo cá nhân của phụ huynh (Cá nhân → Mã QR của tôi)</span>
+                </p>
               </form>
             )}
 

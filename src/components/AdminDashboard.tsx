@@ -24,9 +24,11 @@ import {
   Sparkles,
   RefreshCw,
   KeyRound,
+  QrCode,
 } from 'lucide-react';
 import { AbsenceRecord } from '../types';
 import { TeacherManagement } from './TeacherManagement';
+import { ParentManagement } from './ParentManagement';
 import { apiFetch } from '../utils/api';
 
 interface AdminDashboardProps {
@@ -60,8 +62,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [editingNoteRecord, setEditingNoteRecord] = useState<AbsenceRecord | null>(null);
   const [quickNoteText, setQuickNoteText] = useState<string>('');
 
-  // Admin sub-tab: 'absences' or 'teachers'
-  const [adminSubTab, setAdminSubTab] = useState<'absences' | 'teachers'>('absences');
+  // Admin sub-tab: 'absences', 'teachers', or 'parents'
+  const [adminSubTab, setAdminSubTab] = useState<'absences' | 'teachers' | 'parents'>('absences');
 
   // Change Admin Password Modal
   const [showAdminPassModal, setShowAdminPassModal] = useState<boolean>(false);
@@ -309,9 +311,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-      {/* 0. Top Admin Navigation: Switch between Absences and Teacher Management */}
+      {/* 0. Top Admin Navigation: Switch between Absences, Teacher Management, and Parent QR Management */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200 shadow-xs">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setAdminSubTab('absences')}
             className={`flex items-center gap-2 py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition ${
@@ -335,11 +337,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Users className="w-4 h-4" />
             <span>Cấp Tài Khoản Giáo Viên</span>
           </button>
+
+          <button
+            onClick={() => setAdminSubTab('parents')}
+            className={`flex items-center gap-2 py-2 px-4 rounded-xl text-xs sm:text-sm font-bold transition ${
+              adminSubTab === 'parents'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <QrCode className="w-4 h-4" />
+            <span>Cấp Tài Khoản Phụ Huynh</span>
+          </button>
         </div>
 
         <button
           onClick={() => setShowAdminPassModal(true)}
-          className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-bold transition shadow-2xs"
+          className="inline-flex items-center justify-center gap-1.5 py-2 px-3.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-bold transition shadow-2xs shrink-0"
           title="Đổi mật khẩu tài khoản quản trị"
         >
           <KeyRound className="w-3.5 h-3.5 text-indigo-600" />
@@ -349,6 +363,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {adminSubTab === 'teachers' ? (
         <TeacherManagement schoolName={schoolName} />
+      ) : adminSubTab === 'parents' ? (
+        <ParentManagement schoolName={schoolName} />
       ) : (
         <>
       {/* 1. Header & Summary Cards */}

@@ -27,9 +27,23 @@ export interface UserSession {
   name: string;
   phone?: string;
   username?: string;
+  studentName?: string;
+  studentClass?: string;
   assignedClass?: string; // For homeroom teachers
   isHomeroom?: boolean;
   token: string;
+}
+
+export interface ParentAccount {
+  id: string;
+  orderNumber: number;
+  studentName: string;
+  studentClass: string;
+  phone: string;
+  parentName?: string;
+  qrToken: string;
+  zaloQrCode?: string;
+  createdAt: string;
 }
 
 export interface TeacherAccount {

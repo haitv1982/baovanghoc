@@ -3,6 +3,7 @@ import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import crypto from "node:crypto";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 dotenv.config();
@@ -42,6 +43,7 @@ var DATA_FILE = path.join(DATA_DIR, "absences.json");
 var USERS_FILE = path.join(DATA_DIR, "users.json");
 var ADMIN_FILE = path.join(DATA_DIR, "admin.json");
 var TEACHERS_FILE = path.join(DATA_DIR, "teachers.json");
+var QR_SESSIONS_FILE = path.join(DATA_DIR, "qr_sessions.json");
 var ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
   httpOptions: {
@@ -257,33 +259,138 @@ function getAbsences() {
 function saveAbsences(records) {
   fs.writeFileSync(DATA_FILE, JSON.stringify(records, null, 2), "utf-8");
 }
+function normalizePhone(raw) {
+  return (raw || "").replace(/[\s.\-()]/g, "").trim();
+}
+function phoneMatches(a, b) {
+  const na = normalizePhone(a).replace(/^\+?84/, "0");
+  const nb = normalizePhone(b).replace(/^\+?84/, "0");
+  return Boolean(na && nb && na === nb);
+}
+function parseZaloOrSystemQr(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return { kind: "unknown", raw: "" };
+  const sysToken = extractQrTokenFromPayload(trimmed);
+  if (trimmed.includes("parent_qr=") || /^qr_[0-9a-zA-Z_]+$/i.test(sysToken)) {
+    return { kind: "system_qr", token: sysToken };
+  }
+  const profileMatch = trimmed.match(/zalo(?:app)?\.(?:me|com)\/qr\/p\/([A-Za-z0-9_-]+)/i);
+  if (profileMatch?.[1]) {
+    return { kind: "zalo_profile", profileId: profileMatch[1], raw: trimmed };
+  }
+  const zaloPhoneMatch = trimmed.match(/zalo(?:app)?\.(?:me|com)\/(?:qr\/)?(\+?\d{8,13})(?:[/?#]|$)/i);
+  if (zaloPhoneMatch?.[1]) {
+    return { kind: "zalo_phone", phone: normalizePhone(zaloPhoneMatch[1]) };
+  }
+  const telMatch = trimmed.match(/^tel:(\+?\d{8,13})$/i);
+  if (telMatch?.[1]) {
+    return { kind: "zalo_phone", phone: normalizePhone(telMatch[1]) };
+  }
+  const digitsOnly = normalizePhone(trimmed);
+  if (/^(\+?84|0)\d{8,10}$/.test(digitsOnly)) {
+    return { kind: "zalo_phone", phone: digitsOnly };
+  }
+  return { kind: "unknown", raw: trimmed };
+}
+function generateParentQrToken(phone) {
+  const clean = normalizePhone(phone) || "ph";
+  const rand = crypto.randomBytes(4).toString("hex");
+  return `qr_${clean}_${rand}`;
+}
+function extractQrTokenFromPayload(raw) {
+  const trimmed = (raw || "").trim();
+  if (!trimmed) return "";
+  try {
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      const url = new URL(trimmed);
+      const t = url.searchParams.get("parent_qr");
+      if (t) return t.trim();
+    }
+  } catch {
+  }
+  const match = trimmed.match(/parent_qr=([^&\s]+)/i);
+  if (match?.[1]) {
+    return decodeURIComponent(match[1]).trim();
+  }
+  return trimmed;
+}
 function getUsers() {
+  const defaultUsers = [
+    {
+      id: "par-1",
+      orderNumber: 1,
+      studentName: "Nguy\u1EC5n V\u0103n Minh Khang",
+      studentClass: "6A1",
+      phone: "0987654321",
+      parentName: "Nguy\u1EC5n V\u0103n H\xF9ng",
+      qrToken: "qr_0987654321_giailac01",
+      createdAt: "2026-11-09T06:00:00Z"
+    },
+    {
+      id: "par-2",
+      orderNumber: 2,
+      studentName: "Tr\u1EA7n B\u1EA3o Ng\u1ECDc",
+      studentClass: "7B3",
+      phone: "0912345678",
+      parentName: "Tr\u1EA7n Th\u1ECB Mai",
+      qrToken: "qr_0912345678_giailac02",
+      createdAt: "2026-11-09T06:00:00Z"
+    }
+  ];
   if (!fs.existsSync(USERS_FILE)) {
-    const defaultUsers = [
-      {
-        phone: "0987654321",
-        password: "123",
-        parentName: "Nguy\u1EC5n V\u0103n H\xF9ng",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      },
-      {
-        phone: "0912345678",
-        password: "123",
-        parentName: "Tr\u1EA7n Th\u1ECB Mai",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      }
-    ];
     fs.writeFileSync(USERS_FILE, JSON.stringify(defaultUsers, null, 2), "utf-8");
     return defaultUsers;
   }
   try {
-    return JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
+    const rawList = JSON.parse(fs.readFileSync(USERS_FILE, "utf-8"));
+    let needsSave = false;
+    const migrated = rawList.map((u, idx) => {
+      const cleanPhone = normalizePhone(u.phone || "");
+      const hasAllFields = Boolean(u.id && u.qrToken && u.studentName !== void 0 && u.orderNumber);
+      if (!hasAllFields) needsSave = true;
+      return {
+        id: u.id || `par-${idx + 1}-${cleanPhone || Date.now()}`,
+        orderNumber: u.orderNumber || idx + 1,
+        studentName: (u.studentName || u.parentName || `H\u1ECDc sinh (${cleanPhone.slice(-4)})`).normalize("NFC"),
+        studentClass: (u.studentClass || "").normalize("NFC"),
+        phone: cleanPhone,
+        parentName: (u.parentName || "").normalize("NFC"),
+        password: u.password,
+        qrToken: u.qrToken || generateParentQrToken(cleanPhone),
+        zaloQrCode: u.zaloQrCode || "",
+        createdAt: u.createdAt || (/* @__PURE__ */ new Date()).toISOString()
+      };
+    });
+    if (needsSave) {
+      fs.writeFileSync(USERS_FILE, JSON.stringify(migrated, null, 2), "utf-8");
+    }
+    return migrated;
   } catch {
-    return [];
+    return defaultUsers;
   }
 }
 function saveUsers(users) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2), "utf-8");
+}
+var QR_SESSION_TTL_MS = 15 * 60 * 1e3;
+function getQrSessions() {
+  if (!fs.existsSync(QR_SESSIONS_FILE)) return {};
+  try {
+    const raw = JSON.parse(fs.readFileSync(QR_SESSIONS_FILE, "utf-8")) || {};
+    const now = Date.now();
+    const cleaned = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (v && typeof v.createdAt === "number" && now - v.createdAt < QR_SESSION_TTL_MS) {
+        cleaned[k] = v;
+      }
+    }
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+function saveQrSessions(sessions) {
+  fs.writeFileSync(QR_SESSIONS_FILE, JSON.stringify(sessions, null, 2), "utf-8");
 }
 function getAdmin() {
   if (!fs.existsSync(ADMIN_FILE)) {
@@ -634,57 +741,385 @@ function createApiApp() {
       return res.status(500).json({ success: false, message: err.message });
     }
   });
-  app.post("/api/auth/parent-auth", (req, res) => {
-    const { phone, password, parentName } = req.body;
-    if (!phone || !phone.trim()) {
-      return res.status(400).json({ success: false, message: "Vui l\xF2ng nh\u1EADp s\u1ED1 \u0111i\u1EC7n tho\u1EA1i ph\u1EE5 huynh" });
+  app.get("/api/parents", (_req, res) => {
+    try {
+      const users = getUsers();
+      return res.json({ success: true, data: users });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
     }
-    const cleanPhone = phone.trim();
-    const cleanPass = (password || "").trim();
-    const users = getUsers();
-    const existing = users.find((u) => u.phone === cleanPhone);
-    if (!cleanPass) {
-      return res.status(400).json({ success: false, message: "Vui l\xF2ng nh\u1EADp m\u1EADt kh\u1EA9u" });
-    }
-    if (existing) {
-      if (existing.password === cleanPass) {
-        return res.json({
-          success: true,
-          isFirstTime: false,
-          user: {
-            role: "parent",
-            phone: existing.phone,
-            name: existing.parentName
-          },
-          token: "token-parent-" + cleanPhone
-        });
-      } else {
-        return res.status(401).json({
+  });
+  app.post("/api/parents", (req, res) => {
+    try {
+      const { studentName, studentClass, phone, zaloQrCode } = req.body;
+      const cleanPhone = normalizePhone(phone || "");
+      const cleanStudent = (studentName || "").trim().normalize("NFC");
+      const cleanClass = (studentClass || "").trim().normalize("NFC");
+      const cleanZaloQr = (zaloQrCode || "").trim();
+      if (!cleanStudent || !cleanClass || !cleanPhone) {
+        return res.status(400).json({
           success: false,
-          message: "M\u1EADt kh\u1EA9u kh\xF4ng ch\xEDnh x\xE1c cho s\u1ED1 \u0111i\u1EC7n tho\u1EA1i n\xE0y."
+          message: "Vui l\xF2ng nh\u1EADp \u0111\u1EA7y \u0111\u1EE7 h\u1ECD t\xEAn h\u1ECDc sinh, l\u1EDBp v\xE0 s\u1ED1 \u0111i\u1EC7n tho\u1EA1i ph\u1EE5 huynh."
         });
       }
-    } else {
-      const newUser = {
+      const users = getUsers();
+      const existingIdx = users.findIndex((u) => phoneMatches(u.phone, cleanPhone));
+      if (existingIdx !== -1) {
+        users[existingIdx] = {
+          ...users[existingIdx],
+          studentName: cleanStudent,
+          studentClass: cleanClass,
+          phone: cleanPhone,
+          qrToken: users[existingIdx].qrToken || generateParentQrToken(cleanPhone),
+          zaloQrCode: cleanZaloQr || users[existingIdx].zaloQrCode || ""
+        };
+        saveUsers(users);
+        return res.json({
+          success: true,
+          data: users[existingIdx],
+          message: `\u0110\xE3 c\u1EADp nh\u1EADt th\xF4ng tin & gi\u1EEF nguy\xEAn m\xE3 QR cho S\u0110T ${cleanPhone}.`
+        });
+      }
+      const newParent = {
+        id: "par-" + Date.now() + "-" + Math.floor(Math.random() * 1e3),
+        orderNumber: users.length + 1,
+        studentName: cleanStudent,
+        studentClass: cleanClass,
         phone: cleanPhone,
-        password: cleanPass,
-        parentName: parentName?.trim() || `Ph\u1EE5 huynh (${cleanPhone.slice(-4)})`,
+        qrToken: generateParentQrToken(cleanPhone),
+        zaloQrCode: cleanZaloQr,
         createdAt: (/* @__PURE__ */ new Date()).toISOString()
       };
-      users.push(newUser);
+      users.push(newParent);
+      saveUsers(users);
+      return res.status(201).json({
+        success: true,
+        data: newParent,
+        message: "\u0110\xE3 c\u1EA5p t\xE0i kho\u1EA3n ph\u1EE5 huynh v\xE0 sinh m\xE3 QR th\xE0nh c\xF4ng!"
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.post("/api/parents/batch", (req, res) => {
+    try {
+      const { items } = req.body;
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Danh s\xE1ch ph\u1EE5 huynh kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c r\u1ED7ng."
+        });
+      }
+      const users = getUsers();
+      let addedCount = 0;
+      let updatedCount = 0;
+      for (const item of items) {
+        const cleanStudent = (item.studentName || "").trim().normalize("NFC");
+        const cleanClass = (item.studentClass || "").trim().normalize("NFC");
+        const cleanPhone = normalizePhone(item.phone || "");
+        const cleanZaloQr = (item.zaloQrCode || "").trim();
+        if (!cleanStudent || !cleanPhone) continue;
+        const existingIdx = users.findIndex((u) => phoneMatches(u.phone, cleanPhone));
+        if (existingIdx !== -1) {
+          users[existingIdx] = {
+            ...users[existingIdx],
+            studentName: cleanStudent,
+            studentClass: cleanClass || users[existingIdx].studentClass,
+            qrToken: users[existingIdx].qrToken || generateParentQrToken(cleanPhone),
+            zaloQrCode: cleanZaloQr || users[existingIdx].zaloQrCode || ""
+          };
+          updatedCount++;
+        } else {
+          users.push({
+            id: "par-" + Date.now() + "-" + Math.floor(Math.random() * 1e4),
+            orderNumber: users.length + 1,
+            studentName: cleanStudent,
+            studentClass: cleanClass,
+            phone: cleanPhone,
+            qrToken: generateParentQrToken(cleanPhone),
+            zaloQrCode: cleanZaloQr,
+            createdAt: (/* @__PURE__ */ new Date()).toISOString()
+          });
+          addedCount++;
+        }
+      }
+      const reindexed = users.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(reindexed);
+      return res.json({
+        success: true,
+        addedCount,
+        updatedCount,
+        count: addedCount + updatedCount,
+        data: reindexed,
+        message: `\u0110\xE3 c\u1EA5p t\xE0i kho\u1EA3n & sinh m\xE3 QR cho ${addedCount} ph\u1EE5 huynh m\u1EDBi${updatedCount > 0 ? ` (c\u1EADp nh\u1EADt ${updatedCount} S\u0110T \u0111\xE3 c\xF3)` : ""}!`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.patch("/api/parents/:id/zalo-qr", (req, res) => {
+    try {
+      const { id } = req.params;
+      const { zaloQrCode } = req.body;
+      const users = getUsers();
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n ph\u1EE5 huynh." });
+      }
+      users[idx].zaloQrCode = (zaloQrCode || "").trim();
       saveUsers(users);
       return res.json({
         success: true,
-        isFirstTime: true,
-        message: "\u0110\u0103ng k\xFD m\u1EADt kh\u1EA9u l\u1EA7n \u0111\u1EA7u th\xE0nh c\xF4ng!",
+        data: users[idx],
+        message: users[idx].zaloQrCode ? `\u0110\xE3 g\u1EAFn m\xE3 QR Zalo c\xE1 nh\xE2n cho ph\u1EE5 huynh em ${users[idx].studentName}.` : `\u0110\xE3 g\u1EE1 m\xE3 QR Zalo c\xE1 nh\xE2n c\u1EE7a em ${users[idx].studentName}.`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.patch("/api/parents/:id/regenerate-qr", (req, res) => {
+    try {
+      const { id } = req.params;
+      const users = getUsers();
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) {
+        return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n ph\u1EE5 huynh." });
+      }
+      users[idx].qrToken = generateParentQrToken(users[idx].phone);
+      saveUsers(users);
+      return res.json({
+        success: true,
+        data: users[idx],
+        message: `\u0110\xE3 c\u1EA5p l\u1EA1i m\xE3 QR m\u1EDBi cho S\u0110T ${users[idx].phone}.`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.delete("/api/parents/:id", (req, res) => {
+    try {
+      const { id } = req.params;
+      let users = getUsers();
+      const initialLen = users.length;
+      users = users.filter((u) => u.id !== id);
+      if (users.length === initialLen) {
+        return res.status(404).json({ success: false, message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n ph\u1EE5 huynh \u0111\u1EC3 x\xF3a." });
+      }
+      users = users.map((u, idx) => ({ ...u, orderNumber: idx + 1 }));
+      saveUsers(users);
+      return res.json({ success: true, message: "\u0110\xE3 x\xF3a t\xE0i kho\u1EA3n ph\u1EE5 huynh th\xE0nh c\xF4ng." });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.get("/api/auth/parent-qr-lookup", (req, res) => {
+    try {
+      const cleanPhone = normalizePhone(String(req.query.phone || ""));
+      if (!cleanPhone) {
+        return res.json({ success: true, found: false });
+      }
+      const users = getUsers();
+      const account = users.find((u) => normalizePhone(u.phone) === cleanPhone);
+      if (!account) {
+        return res.json({ success: true, found: false });
+      }
+      return res.json({
+        success: true,
+        found: true,
+        account: {
+          id: account.id,
+          studentName: account.studentName,
+          studentClass: account.studentClass,
+          phone: account.phone,
+          qrToken: account.qrToken
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.post("/api/auth/qr-session", (_req, res) => {
+    try {
+      const sessionId = "qrs_" + crypto.randomBytes(10).toString("hex");
+      const sessions = getQrSessions();
+      sessions[sessionId] = {
+        sessionId,
+        status: "pending",
+        createdAt: Date.now()
+      };
+      saveQrSessions(sessions);
+      return res.json({ success: true, sessionId });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.get("/api/auth/qr-session-status", (req, res) => {
+    try {
+      const sessionId = String(req.query.sessionId || "").trim();
+      if (!sessionId) {
+        return res.status(400).json({ success: false, status: "invalid" });
+      }
+      const sessions = getQrSessions();
+      const sess = sessions[sessionId];
+      if (!sess) {
+        return res.json({ success: true, status: "expired" });
+      }
+      if (sess.status === "confirmed" && sess.user && sess.token) {
+        return res.json({
+          success: true,
+          status: "confirmed",
+          user: sess.user,
+          token: sess.token
+        });
+      }
+      return res.json({ success: true, status: "pending" });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.post("/api/auth/parent-qr-confirm", (req, res) => {
+    try {
+      const { qrData, sessionId } = req.body;
+      const extracted = extractQrTokenFromPayload(String(qrData || ""));
+      if (!extracted) {
+        return res.status(400).json({
+          success: false,
+          message: "M\xE3 QR kh\xF4ng h\u1EE3p l\u1EC7."
+        });
+      }
+      const users = getUsers();
+      const matched = users.find((u) => u.qrToken === extracted);
+      if (!matched) {
+        return res.status(401).json({
+          success: false,
+          message: "M\xE3 QR ch\u01B0a \u0111\u01B0\u1EE3c Admin nh\xE0 tr\u01B0\u1EDDng c\u1EA5p t\xE0i kho\u1EA3n ho\u1EB7c \u0111\xE3 b\u1ECB thu h\u1ED3i."
+        });
+      }
+      const userPayload = {
+        role: "parent",
+        phone: matched.phone,
+        name: matched.parentName || `Ph\u1EE5 huynh em ${matched.studentName}`,
+        studentName: matched.studentName,
+        studentClass: matched.studentClass
+      };
+      const token = "token-parent-" + matched.phone;
+      const cleanSessionId = String(sessionId || "").trim();
+      let confirmedDesktop = false;
+      if (cleanSessionId && cleanSessionId.startsWith("qrs_")) {
+        const sessions = getQrSessions();
+        const existingSess = sessions[cleanSessionId];
+        sessions[cleanSessionId] = {
+          sessionId: cleanSessionId,
+          status: "confirmed",
+          createdAt: existingSess?.createdAt || Date.now(),
+          confirmedAt: Date.now(),
+          user: userPayload,
+          token
+        };
+        saveQrSessions(sessions);
+        confirmedDesktop = true;
+      }
+      return res.json({
+        success: true,
+        confirmedDesktop,
+        user: userPayload,
+        token
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+  app.post("/api/auth/parent-qr-login", (req, res) => {
+    try {
+      const { qrData, mode } = req.body;
+      const rawInput = String(qrData || "").trim();
+      if (!rawInput) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui l\xF2ng cung c\u1EA5p \u1EA3nh ho\u1EB7c m\xE3 QR h\u1EE3p l\u1EC7 \u0111\u1EC3 \u0111\u0103ng nh\u1EADp."
+        });
+      }
+      const users = getUsers();
+      const parsed = parseZaloOrSystemQr(rawInput);
+      if (mode === "zalo_image") {
+        if (parsed.kind === "system_qr") {
+          return res.status(400).json({
+            success: false,
+            message: "\u0110\xE2y l\xE0 m\xE3 QR h\u1EC7 th\u1ED1ng khi nh\u1EADp S\u0110T. \u0110\u1EC3 \u0111\u0103ng nh\u1EADp b\u1EB1ng \u1EA3nh QR, vui l\xF2ng ch\u1ECDn \u1EA3nh M\xE3 QR Zalo c\xE1 nh\xE2n c\u1EE7a ph\u1EE5 huynh."
+          });
+        }
+        let matched2;
+        if (parsed.kind === "zalo_phone") {
+          matched2 = users.find((u) => phoneMatches(u.phone, parsed.phone));
+          if (!matched2) {
+            return res.status(401).json({
+              success: false,
+              message: `S\u1ED1 \u0111i\u1EC7n tho\u1EA1i ${parsed.phone} trong m\xE3 QR Zalo ch\u01B0a \u0111\u01B0\u1EE3c nh\xE0 tr\u01B0\u1EDDng c\u1EA5p t\xE0i kho\u1EA3n.`
+            });
+          }
+        } else if (parsed.kind === "zalo_profile") {
+          matched2 = users.find((u) => {
+            if (!u.zaloQrCode) return false;
+            const linked = parseZaloOrSystemQr(u.zaloQrCode);
+            return linked.kind === "zalo_profile" && linked.profileId.toLowerCase() === parsed.profileId.toLowerCase();
+          });
+          if (!matched2) {
+            return res.status(401).json({
+              success: false,
+              message: "M\xE3 QR Zalo c\xE1 nh\xE2n (zalo.me/qr/p/...) \u1EA9n s\u1ED1 \u0111i\u1EC7n tho\u1EA1i n\xEAn ch\u01B0a kh\u1EDBp \u0111\u01B0\u1EE3c v\u1EDBi S\u0110T h\u1ECDc sinh. Vui l\xF2ng g\u1EEDi \u1EA3nh m\xE3 QR Zalo n\xE0y cho Gi\xE1o vi\xEAn ho\u1EB7c Admin g\u1EAFn v\xE0o t\xE0i kho\u1EA3n S\u0110T c\u1EE7a ph\u1EE5 huynh."
+            });
+          }
+        } else {
+          matched2 = users.find(
+            (u) => u.zaloQrCode && u.zaloQrCode.trim() === rawInput
+          );
+          if (!matched2) {
+            return res.status(400).json({
+              success: false,
+              message: "\u1EA2nh t\u1EA3i l\xEAn kh\xF4ng ph\u1EA3i l\xE0 m\xE3 QR Zalo c\xE1 nh\xE2n h\u1EE3p l\u1EC7 c\u1EE7a ph\u1EE5 huynh \u0111\xE3 \u0111\u0103ng k\xFD."
+            });
+          }
+        }
+        return res.json({
+          success: true,
+          user: {
+            role: "parent",
+            phone: matched2.phone,
+            name: matched2.parentName || `Ph\u1EE5 huynh em ${matched2.studentName}`,
+            studentName: matched2.studentName,
+            studentClass: matched2.studentClass
+          },
+          token: "token-parent-" + matched2.phone
+        });
+      }
+      const extracted = extractQrTokenFromPayload(rawInput);
+      const matched = users.find((u) => u.qrToken === extracted);
+      if (!matched) {
+        return res.status(401).json({
+          success: false,
+          message: "M\xE3 QR kh\xF4ng h\u1EE3p l\u1EC7 ho\u1EB7c ch\u01B0a \u0111\u01B0\u1EE3c Admin nh\xE0 tr\u01B0\u1EDDng c\u1EA5p t\xE0i kho\u1EA3n. Vui l\xF2ng li\xEAn h\u1EC7 nh\xE0 tr\u01B0\u1EDDng \u0111\u1EC3 \u0111\u01B0\u1EE3c c\u1EA5p l\u1EA1i."
+        });
+      }
+      return res.json({
+        success: true,
         user: {
           role: "parent",
-          phone: newUser.phone,
-          name: newUser.parentName
+          phone: matched.phone,
+          name: matched.parentName || `Ph\u1EE5 huynh em ${matched.studentName}`,
+          studentName: matched.studentName,
+          studentClass: matched.studentClass
         },
-        token: "token-parent-" + cleanPhone
+        token: "token-parent-" + matched.phone
       });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
     }
+  });
+  app.post("/api/auth/parent-auth", (_req, res) => {
+    return res.status(403).json({
+      success: false,
+      message: "H\u1EC7 th\u1ED1ng kh\xF4ng cho ph\xE9p v\xE0o ch\u1EC9 b\u1EB1ng s\u1ED1 \u0111i\u1EC7n tho\u1EA1i. Vui l\xF2ng qu\xE9t m\xE3 QR b\u1EB1ng Zalo ho\u1EB7c \u0111\u0103ng nh\u1EADp b\u1EB1ng \u1EA3nh QR."
+    });
   });
   app.get("/api/absences", (req, res) => {
     try {
@@ -943,6 +1378,42 @@ Y\xEAu c\u1EA7u:
     } catch (err) {
       return res.status(500).json({ success: false, message: err.message });
     }
+  });
+  app.get("/", (req, res, next) => {
+    const parentQr = typeof req.query.parent_qr === "string" ? req.query.parent_qr.trim() : "";
+    const qrSession = typeof req.query.qr_session === "string" ? req.query.qr_session.trim() : "";
+    if (!parentQr || !qrSession || !qrSession.startsWith("qrs_")) {
+      return next();
+    }
+    try {
+      const extracted = extractQrTokenFromPayload(parentQr);
+      const users = getUsers();
+      const matched = users.find((u) => u.qrToken === extracted);
+      if (matched) {
+        const sessions = getQrSessions();
+        const existingSess = sessions[qrSession];
+        sessions[qrSession] = {
+          sessionId: qrSession,
+          status: "confirmed",
+          createdAt: existingSess?.createdAt || Date.now(),
+          confirmedAt: Date.now(),
+          user: {
+            role: "parent",
+            phone: matched.phone,
+            name: matched.parentName || `Ph\u1EE5 huynh em ${matched.studentName}`,
+            studentName: matched.studentName,
+            studentClass: matched.studentClass
+          },
+          token: "token-parent-" + matched.phone
+        };
+        saveQrSessions(sessions);
+      }
+    } catch {
+    }
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(
+      '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title></title></head><body style="margin:0;background:#ffffff;"><script>try{window.close();}catch(e){}try{if(window.history.length>1)window.history.back();}catch(e){}</script></body></html>'
+    );
   });
   app.get("/api/health", (_req, res) => {
     return res.json({

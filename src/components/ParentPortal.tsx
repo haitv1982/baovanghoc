@@ -65,13 +65,28 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
   const [date, setDate] = useState<string>(todayStr);
   const [morning, setMorning] = useState<boolean>(true);
   const [afternoon, setAfternoon] = useState<boolean>(false);
-  const [studentName, setStudentName] = useState<string>('');
-  const [studentClass, setStudentClass] = useState<string>('6A1');
+  const [studentName, setStudentName] = useState<string>(session.studentName || '');
+  const [studentClass, setStudentClass] = useState<string>(session.studentClass || '6A1');
   const [teacherName, setTeacherName] = useState<string>('Cô Nguyễn Thị Hoa');
   const [selectedPreset, setSelectedPreset] = useState<string>(PRESET_REASONS[0].label);
   const [reasonDetail, setReasonDetail] = useState<string>(PRESET_REASONS[0].detailHint);
   const [parentName, setParentName] = useState<string>(session.name || '');
   const [parentPhone, setParentPhone] = useState<string>(session.phone || '');
+
+  useEffect(() => {
+    if (session.studentName) {
+      setStudentName((prev) => prev || session.studentName || '');
+    }
+    if (session.studentClass) {
+      setStudentClass(session.studentClass);
+    }
+    if (session.name) {
+      setParentName((prev) => prev || session.name || '');
+    }
+    if (session.phone) {
+      setParentPhone(session.phone);
+    }
+  }, [session.studentName, session.studentClass, session.name, session.phone]);
 
   // AI Generated letter state
   const [aiLetter, setAiLetter] = useState<string>('');
@@ -196,7 +211,7 @@ Người làm đơn: ${studentName || 'Học sinh'}`.normalize('NFC');
     if (!file) return;
 
     if (file.size > 25 * 1024 * 1024) {
-      alert('Tệp đính kèm tối đa 25MB. Vui lòng chọn tệp nhỏ hơn.');
+      setErrorMessage('Tệp đính kèm tối đa 25MB. Vui lòng chọn tệp nhỏ hơn.');
       return;
     }
 
