@@ -15,7 +15,9 @@ const ROOT_DIR = fs.existsSync(path.join(__dirname, 'package.json'))
   : path.resolve(__dirname, '..');
 
 const PORT = Number(process.env.PORT) || 3000;
-const BUNDLED_DATA_DIR = path.join(ROOT_DIR, 'data');
+const BUNDLED_DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(ROOT_DIR, 'data');
 
 function resolveWritableDataDir(): string {
   try {
@@ -946,9 +948,14 @@ export function createApiApp() {
       dateStr = `${d}/${m}/${y}`;
     }
 
+    const cleanSchool = (schoolName || 'THCS Giai Lạc')
+      .normalize('NFC')
+      .replace(/^trường\s+/i, '')
+      .trim() || 'THCS Giai Lạc';
+
     const teacherLine = teacherName
-      ? `- Giáo viên chủ nhiệm lớp: ${studentClass} (${teacherName})`
-      : `- Giáo viên chủ nhiệm lớp: ${studentClass || '...'}`;
+      ? `- Giáo viên chủ nhiệm lớp ${studentClass} (${teacherName})`
+      : `- Giáo viên chủ nhiệm lớp ${studentClass || '...'}`;
 
     const fallbackLetter = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
 Độc lập - Tự do - Hạnh phúc
@@ -956,24 +963,20 @@ export function createApiApp() {
 
 ĐƠN XIN PHÉP NGHỈ HỌC
 
-Kính gửi:  - Ban giám hiệu trường ${schoolName || 'THCS Giai Lạc'}
+Kính gửi:  - Ban giám hiệu trường ${cleanSchool}
            ${teacherLine}
 
 Em tên là: ${studentName || '...................................................'}
 Hiện là học sinh lớp: ${studentClass || '...................................................'}
 Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${dateStr}.
-Lý do (Ghi cụ thể): ${reasonPreset || 'Bị ốm'}. ${reasonDetail ? `(${reasonDetail})` : ''}
-Em xin hứa: Sẽ chủ động liên hệ bạn bè để mượn vở chép bài học đầy đủ, hoàn thành tất cả các bài tập được giao và đi học lại nghiêm túc, đúng giờ.
+Lý do (Ghi cụ thể): ${reasonPreset || 'Bị ốm'}${reasonDetail ? ` (${reasonDetail})` : ''}
+Em xin hứa: Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
 
 Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
 
-                                    Giai Lạc, ngày ${day} tháng ${month} năm ${year}
-
-      Chữ ký của Phụ huynh học sinh                    Người làm đơn
-                                                      (Ghi rõ họ và tên)
-
-         ${parentName || 'Phụ huynh'}                                   ${studentName || 'Học sinh'}
-       (SĐT: ${parentPhone || '...'})`;
+Giai Lạc, ngày ${day} tháng ${month} năm ${year}
+Chữ ký của Phụ huynh học sinh: ${parentName || 'Phụ huynh'} (SĐT: ${parentPhone || '...'})
+Người làm đơn: ${studentName || 'Học sinh'}`.normalize('NFC');
 
     try {
       if (!ai) {
@@ -981,7 +984,7 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
       }
 
       const prompt = `Bạn là thư ký hành chính học đường chuyên nghiệp tại Việt Nam.
-Hãy soạn thảo bức "ĐƠN XIN PHÉP NGHỈ HỌC" theo đúng mẫu chuẩn văn bản học đường sau đây (giống trong biểu mẫu của trường THCS Giai Lạc):
+Hãy soạn thảo bức "ĐƠN XIN PHÉP NGHỈ HỌC" theo đúng mẫu chuẩn văn bản học đường sau đây (giống trong biểu mẫu của trường ${cleanSchool}):
 
 CẤU TRÚC BẮT BUỘC (GIỮ NGUYÊN BỐ CỤC ĐỊNH DẠNG NÀY):
 --------------------------------------------------
@@ -991,29 +994,25 @@ CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
 
 ĐƠN XIN PHÉP NGHỈ HỌC
 
-Kính gửi:  - Ban giám hiệu trường ${schoolName || 'THCS Giai Lạc'}
+Kính gửi:  - Ban giám hiệu trường ${cleanSchool}
            ${teacherLine}
 
 Em tên là: ${studentName || '...'}
 Hiện là học sinh lớp: ${studentClass || '...'}
 Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${dateStr}.
-Lý do (Ghi cụ thể): ${reasonPreset || 'Sức khỏe không tốt'}. ${reasonDetail ? `(${reasonDetail})` : ''}
+Lý do (Ghi cụ thể): ${reasonPreset || 'Sức khỏe không tốt'}${reasonDetail ? ` (${reasonDetail})` : ''}
 Em xin hứa: Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
 
 Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
 
-                                    Giai Lạc, ngày ${day} tháng ${month} năm ${year}
-
-      Chữ ký của Phụ huynh học sinh                    Người làm đơn
-                                                      (Ghi rõ họ và tên)
-
-         ${parentName || 'Phụ huynh'}                                   ${studentName || 'Học sinh'}
-       (SĐT: ${parentPhone || '...'})
+Giai Lạc, ngày ${day} tháng ${month} năm ${year}
+Chữ ký của Phụ huynh học sinh: ${parentName || 'Phụ huynh'} (SĐT: ${parentPhone || '...'})
+Người làm đơn: ${studentName || 'Học sinh'}
 --------------------------------------------------
 
 Yêu cầu:
 - Không dùng khối markdown (\`\`\`).
-- Điền đầy đủ thông tin thực tế: Tên học sinh (${studentName}), Lớp (${studentClass}), Giáo viên chủ nhiệm (${teacherName || 'Chưa rõ'}), Lý do cụ thể, Tên phụ huynh (${parentName}), SĐT (${parentPhone}).
+- Viết câu văn tại mục "Lý do (Ghi cụ thể):" và "Em xin hứa:" thật mạch lạc, kính cẩn, chuẩn tiếng Việt.
 - Giữ trọn vẹn phong thái kính cẩn, văn phong trang trọng, chuẩn mực tiếng Việt.`;
 
       const response = await ai.models.generateContent({
@@ -1021,7 +1020,7 @@ Yêu cầu:
         contents: prompt,
       });
 
-      const text = response.text?.trim();
+      const text = response.text?.trim()?.normalize('NFC');
       return res.json({
         success: true,
         letter: text || fallbackLetter,
@@ -1065,6 +1064,15 @@ Yêu cầu:
     }
   });
 
+  // Health check endpoint (for Render.com & cloud platforms)
+  app.get('/api/health', (_req: Request, res: Response) => {
+    return res.json({
+      status: 'ok',
+      uptime: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
+
   // Ensure any unknown /api/* route always returns JSON
   app.all('/api/*', (_req: Request, res: Response) => {
     return res.status(404).json({
@@ -1092,9 +1100,14 @@ export const apiApp = createApiApp();
 async function startServer() {
   const app = apiApp;
 
-  // Serve static files or Vite middleware
-  if (process.env.NODE_ENV === 'production') {
-    const distDir = path.join(ROOT_DIR, 'dist');
+  const distDir = path.join(ROOT_DIR, 'dist');
+  const isCompiledServer = path.basename(__filename) === 'server.js';
+  const useProductionStatic =
+    process.env.NODE_ENV === 'production' ||
+    (isCompiledServer && fs.existsSync(path.join(distDir, 'index.html')));
+
+  // Serve static files in production or Vite middleware in dev
+  if (useProductionStatic) {
     app.use(express.static(distDir));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distDir, 'index.html'));

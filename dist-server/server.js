@@ -10,7 +10,7 @@ var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
 var ROOT_DIR = fs.existsSync(path.join(__dirname, "package.json")) ? __dirname : path.resolve(__dirname, "..");
 var PORT = Number(process.env.PORT) || 3e3;
-var BUNDLED_DATA_DIR = path.join(ROOT_DIR, "data");
+var BUNDLED_DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT_DIR, "data");
 function resolveWritableDataDir() {
   try {
     if (!fs.existsSync(BUNDLED_DATA_DIR)) {
@@ -846,37 +846,34 @@ function createApiApp() {
       year = y;
       dateStr = `${d}/${m}/${y}`;
     }
-    const teacherLine = teacherName ? `- Gi\xE1o vi\xEAn ch\u1EE7 nhi\u1EC7m l\u1EDBp: ${studentClass} (${teacherName})` : `- Gi\xE1o vi\xEAn ch\u1EE7 nhi\u1EC7m l\u1EDBp: ${studentClass || "..."}`;
+    const cleanSchool = (schoolName || "THCS Giai L\u1EA1c").normalize("NFC").replace(/^trường\s+/i, "").trim() || "THCS Giai L\u1EA1c";
+    const teacherLine = teacherName ? `- Gi\xE1o vi\xEAn ch\u1EE7 nhi\u1EC7m l\u1EDBp ${studentClass} (${teacherName})` : `- Gi\xE1o vi\xEAn ch\u1EE7 nhi\u1EC7m l\u1EDBp ${studentClass || "..."}`;
     const fallbackLetter = `C\u1ED8NG H\xD2A X\xC3 H\u1ED8I CH\u1EE6 NGH\u0128A VI\u1EC6T NAM
 \u0110\u1ED9c l\u1EADp - T\u1EF1 do - H\u1EA1nh ph\xFAc
 ----------------***----------------
 
 \u0110\u01A0N XIN PH\xC9P NGH\u1EC8 H\u1ECCC
 
-K\xEDnh g\u1EEDi:  - Ban gi\xE1m hi\u1EC7u tr\u01B0\u1EDDng ${schoolName || "THCS Giai L\u1EA1c"}
+K\xEDnh g\u1EEDi:  - Ban gi\xE1m hi\u1EC7u tr\u01B0\u1EDDng ${cleanSchool}
            ${teacherLine}
 
 Em t\xEAn l\xE0: ${studentName || "..................................................."}
 Hi\u1EC7n l\xE0 h\u1ECDc sinh l\u1EDBp: ${studentClass || "..................................................."}
 Em vi\u1EBFt \u0111\u01A1n n\xE0y xin ph\xE9p \u0111\u01B0\u1EE3c ngh\u1EC9 h\u1ECDc ${sessionText} ng\xE0y ${dateStr}.
-L\xFD do (Ghi c\u1EE5 th\u1EC3): ${reasonPreset || "B\u1ECB \u1ED1m"}. ${reasonDetail ? `(${reasonDetail})` : ""}
-Em xin h\u1EE9a: S\u1EBD ch\u1EE7 \u0111\u1ED9ng li\xEAn h\u1EC7 b\u1EA1n b\xE8 \u0111\u1EC3 m\u01B0\u1EE3n v\u1EDF ch\xE9p b\xE0i h\u1ECDc \u0111\u1EA7y \u0111\u1EE7, ho\xE0n th\xE0nh t\u1EA5t c\u1EA3 c\xE1c b\xE0i t\u1EADp \u0111\u01B0\u1EE3c giao v\xE0 \u0111i h\u1ECDc l\u1EA1i nghi\xEAm t\xFAc, \u0111\xFAng gi\u1EDD.
+L\xFD do (Ghi c\u1EE5 th\u1EC3): ${reasonPreset || "B\u1ECB \u1ED1m"}${reasonDetail ? ` (${reasonDetail})` : ""}
+Em xin h\u1EE9a: S\u1EBD t\u1EF1 gi\xE1c ch\xE9p b\xE0i, m\u01B0\u1EE3n v\u1EDF b\u1EA1n b\xF9 \u0111\u1EAFp ki\u1EBFn th\u1EE9c nh\u1EEFng ti\u1EBFt h\u1ECDc v\u1EAFng, ho\xE0n th\xE0nh b\xE0i t\u1EADp \u0111\u1EA7y \u0111\u1EE7 v\xE0 \u0111i h\u1ECDc l\u1EA1i nghi\xEAm t\xFAc, \u0111\xFAng gi\u1EDD.
 
 R\u1EA5t mong \u0111\u01B0\u1EE3c s\u1EF1 ch\u1EA5p nh\u1EADn c\u1EE7a qu\xFD Th\u1EA7y, C\xF4. Em xin ch\xE2n th\xE0nh c\xE1m \u01A1n!
 
-                                    Giai L\u1EA1c, ng\xE0y ${day} th\xE1ng ${month} n\u0103m ${year}
-
-      Ch\u1EEF k\xFD c\u1EE7a Ph\u1EE5 huynh h\u1ECDc sinh                    Ng\u01B0\u1EDDi l\xE0m \u0111\u01A1n
-                                                      (Ghi r\xF5 h\u1ECD v\xE0 t\xEAn)
-
-         ${parentName || "Ph\u1EE5 huynh"}                                   ${studentName || "H\u1ECDc sinh"}
-       (S\u0110T: ${parentPhone || "..."})`;
+Giai L\u1EA1c, ng\xE0y ${day} th\xE1ng ${month} n\u0103m ${year}
+Ch\u1EEF k\xFD c\u1EE7a Ph\u1EE5 huynh h\u1ECDc sinh: ${parentName || "Ph\u1EE5 huynh"} (S\u0110T: ${parentPhone || "..."})
+Ng\u01B0\u1EDDi l\xE0m \u0111\u01A1n: ${studentName || "H\u1ECDc sinh"}`.normalize("NFC");
     try {
       if (!ai) {
         return res.json({ success: true, letter: fallbackLetter });
       }
       const prompt = `B\u1EA1n l\xE0 th\u01B0 k\xFD h\xE0nh ch\xEDnh h\u1ECDc \u0111\u01B0\u1EDDng chuy\xEAn nghi\u1EC7p t\u1EA1i Vi\u1EC7t Nam.
-H\xE3y so\u1EA1n th\u1EA3o b\u1EE9c "\u0110\u01A0N XIN PH\xC9P NGH\u1EC8 H\u1ECCC" theo \u0111\xFAng m\u1EABu chu\u1EA9n v\u0103n b\u1EA3n h\u1ECDc \u0111\u01B0\u1EDDng sau \u0111\xE2y (gi\u1ED1ng trong bi\u1EC3u m\u1EABu c\u1EE7a tr\u01B0\u1EDDng THCS Giai L\u1EA1c):
+H\xE3y so\u1EA1n th\u1EA3o b\u1EE9c "\u0110\u01A0N XIN PH\xC9P NGH\u1EC8 H\u1ECCC" theo \u0111\xFAng m\u1EABu chu\u1EA9n v\u0103n b\u1EA3n h\u1ECDc \u0111\u01B0\u1EDDng sau \u0111\xE2y (gi\u1ED1ng trong bi\u1EC3u m\u1EABu c\u1EE7a tr\u01B0\u1EDDng ${cleanSchool}):
 
 C\u1EA4U TR\xDAC B\u1EAET BU\u1ED8C (GI\u1EEE NGUY\xCAN B\u1ED0 C\u1EE4C \u0110\u1ECANH D\u1EA0NG N\xC0Y):
 --------------------------------------------------
@@ -886,35 +883,31 @@ C\u1ED8NG H\xD2A X\xC3 H\u1ED8I CH\u1EE6 NGH\u0128A VI\u1EC6T NAM
 
 \u0110\u01A0N XIN PH\xC9P NGH\u1EC8 H\u1ECCC
 
-K\xEDnh g\u1EEDi:  - Ban gi\xE1m hi\u1EC7u tr\u01B0\u1EDDng ${schoolName || "THCS Giai L\u1EA1c"}
+K\xEDnh g\u1EEDi:  - Ban gi\xE1m hi\u1EC7u tr\u01B0\u1EDDng ${cleanSchool}
            ${teacherLine}
 
 Em t\xEAn l\xE0: ${studentName || "..."}
 Hi\u1EC7n l\xE0 h\u1ECDc sinh l\u1EDBp: ${studentClass || "..."}
 Em vi\u1EBFt \u0111\u01A1n n\xE0y xin ph\xE9p \u0111\u01B0\u1EE3c ngh\u1EC9 h\u1ECDc ${sessionText} ng\xE0y ${dateStr}.
-L\xFD do (Ghi c\u1EE5 th\u1EC3): ${reasonPreset || "S\u1EE9c kh\u1ECFe kh\xF4ng t\u1ED1t"}. ${reasonDetail ? `(${reasonDetail})` : ""}
+L\xFD do (Ghi c\u1EE5 th\u1EC3): ${reasonPreset || "S\u1EE9c kh\u1ECFe kh\xF4ng t\u1ED1t"}${reasonDetail ? ` (${reasonDetail})` : ""}
 Em xin h\u1EE9a: S\u1EBD t\u1EF1 gi\xE1c ch\xE9p b\xE0i, m\u01B0\u1EE3n v\u1EDF b\u1EA1n b\xF9 \u0111\u1EAFp ki\u1EBFn th\u1EE9c nh\u1EEFng ti\u1EBFt h\u1ECDc v\u1EAFng, ho\xE0n th\xE0nh b\xE0i t\u1EADp \u0111\u1EA7y \u0111\u1EE7 v\xE0 \u0111i h\u1ECDc l\u1EA1i nghi\xEAm t\xFAc, \u0111\xFAng gi\u1EDD.
 
 R\u1EA5t mong \u0111\u01B0\u1EE3c s\u1EF1 ch\u1EA5p nh\u1EADn c\u1EE7a qu\xFD Th\u1EA7y, C\xF4. Em xin ch\xE2n th\xE0nh c\xE1m \u01A1n!
 
-                                    Giai L\u1EA1c, ng\xE0y ${day} th\xE1ng ${month} n\u0103m ${year}
-
-      Ch\u1EEF k\xFD c\u1EE7a Ph\u1EE5 huynh h\u1ECDc sinh                    Ng\u01B0\u1EDDi l\xE0m \u0111\u01A1n
-                                                      (Ghi r\xF5 h\u1ECD v\xE0 t\xEAn)
-
-         ${parentName || "Ph\u1EE5 huynh"}                                   ${studentName || "H\u1ECDc sinh"}
-       (S\u0110T: ${parentPhone || "..."})
+Giai L\u1EA1c, ng\xE0y ${day} th\xE1ng ${month} n\u0103m ${year}
+Ch\u1EEF k\xFD c\u1EE7a Ph\u1EE5 huynh h\u1ECDc sinh: ${parentName || "Ph\u1EE5 huynh"} (S\u0110T: ${parentPhone || "..."})
+Ng\u01B0\u1EDDi l\xE0m \u0111\u01A1n: ${studentName || "H\u1ECDc sinh"}
 --------------------------------------------------
 
 Y\xEAu c\u1EA7u:
 - Kh\xF4ng d\xF9ng kh\u1ED1i markdown (\`\`\`).
-- \u0110i\u1EC1n \u0111\u1EA7y \u0111\u1EE7 th\xF4ng tin th\u1EF1c t\u1EBF: T\xEAn h\u1ECDc sinh (${studentName}), L\u1EDBp (${studentClass}), Gi\xE1o vi\xEAn ch\u1EE7 nhi\u1EC7m (${teacherName || "Ch\u01B0a r\xF5"}), L\xFD do c\u1EE5 th\u1EC3, T\xEAn ph\u1EE5 huynh (${parentName}), S\u0110T (${parentPhone}).
+- Vi\u1EBFt c\xE2u v\u0103n t\u1EA1i m\u1EE5c "L\xFD do (Ghi c\u1EE5 th\u1EC3):" v\xE0 "Em xin h\u1EE9a:" th\u1EADt m\u1EA1ch l\u1EA1c, k\xEDnh c\u1EA9n, chu\u1EA9n ti\u1EBFng Vi\u1EC7t.
 - Gi\u1EEF tr\u1ECDn v\u1EB9n phong th\xE1i k\xEDnh c\u1EA9n, v\u0103n phong trang tr\u1ECDng, chu\u1EA9n m\u1EF1c ti\u1EBFng Vi\u1EC7t.`;
       const response = await ai.models.generateContent({
         model: "gemini-3.8-flash",
         contents: prompt
       });
-      const text = response.text?.trim();
+      const text = response.text?.trim()?.normalize("NFC");
       return res.json({
         success: true,
         letter: text || fallbackLetter
@@ -951,6 +944,13 @@ Y\xEAu c\u1EA7u:
       return res.status(500).json({ success: false, message: err.message });
     }
   });
+  app.get("/api/health", (_req, res) => {
+    return res.json({
+      status: "ok",
+      uptime: Math.round(process.uptime()),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  });
   app.all("/api/*", (_req, res) => {
     return res.status(404).json({
       success: false,
@@ -971,8 +971,10 @@ Y\xEAu c\u1EA7u:
 var apiApp = createApiApp();
 async function startServer() {
   const app = apiApp;
-  if (process.env.NODE_ENV === "production") {
-    const distDir = path.join(ROOT_DIR, "dist");
+  const distDir = path.join(ROOT_DIR, "dist");
+  const isCompiledServer = path.basename(__filename) === "server.js";
+  const useProductionStatic = process.env.NODE_ENV === "production" || isCompiledServer && fs.existsSync(path.join(distDir, "index.html"));
+  if (useProductionStatic) {
     app.use(express.static(distDir));
     app.get("*", (_req, res) => {
       res.sendFile(path.join(distDir, "index.html"));

@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { AbsenceRecord, UserSession } from '../types';
 import { apiFetch } from '../utils/api';
+import { FormalLeaveDocument, cleanSchoolDisplay } from './FormalLeaveDocument';
 
 interface ParentPortalProps {
   session: UserSession;
@@ -149,15 +150,17 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         throw new Error(data.message || 'Không thể tạo đơn tự động.');
       }
     } catch (err: any) {
-      // Fallback local letter formatted strictly like user's photo
+      // Fallback local letter formatted cleanly in NFC
       const sessionText = morning && afternoon ? 'cả ngày (buổi sáng và buổi chiều)' : morning ? 'buổi sáng' : 'buổi chiều';
       const parts = date.split('-');
       const d = parts[2] || '...';
       const m = parts[1] || '...';
       const y = parts[0] || '2026';
+      const formattedDate = parts.length === 3 ? `${d}/${m}/${y}` : date;
+      const schoolDisplay = cleanSchoolDisplay(schoolName);
       const teacherLine = teacherName
-        ? `- Giáo viên chủ nhiệm lớp: ${studentClass} (${teacherName})`
-        : `- Giáo viên chủ nhiệm lớp: ${studentClass || '...'}`;
+        ? `- Giáo viên chủ nhiệm lớp ${studentClass} (${teacherName})`
+        : `- Giáo viên chủ nhiệm lớp ${studentClass || '...'}`;
 
       const fallback = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
 Độc lập - Tự do - Hạnh phúc
@@ -165,24 +168,20 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
 
 ĐƠN XIN PHÉP NGHỈ HỌC
 
-Kính gửi:  - Ban giám hiệu trường ${schoolName}
+Kính gửi:  - Ban giám hiệu trường ${schoolDisplay}
            ${teacherLine}
 
 Em tên là: ${studentName}
 Hiện là học sinh lớp: ${studentClass}
-Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${parts.reverse().join('/')}.
-Lý do (Ghi cụ thể): ${selectedPreset}. ${reasonDetail ? `(${reasonDetail})` : ''}
+Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${formattedDate}.
+Lý do (Ghi cụ thể): ${selectedPreset}${reasonDetail?.trim() ? ` (${reasonDetail.trim()})` : ''}
 Em xin hứa: Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
 
 Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
 
-                                    Giai Lạc, ngày ${d} tháng ${m} năm ${y}
-
-      Chữ ký của Phụ huynh học sinh                    Người làm đơn
-                                                      (Ghi rõ họ và tên)
-
-         ${parentName || 'Phụ huynh'}                                   ${studentName || 'Học sinh'}
-       (SĐT: ${parentPhone || '...'})`;
+Giai Lạc, ngày ${d} tháng ${m} năm ${y}
+Chữ ký của Phụ huynh học sinh: ${parentName || 'Phụ huynh'} (SĐT: ${parentPhone || '...'})
+Người làm đơn: ${studentName || 'Học sinh'}`.normalize('NFC');
 
       setAiLetter(fallback);
       setShowAiLetterPreview(true);
@@ -248,9 +247,11 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
         const d = parts[2] || '...';
         const m = parts[1] || '...';
         const y = parts[0] || '2026';
+        const formattedDate = parts.length === 3 ? `${d}/${m}/${y}` : date;
+        const schoolDisplay = cleanSchoolDisplay(schoolName);
         const teacherLine = teacherName
-          ? `- Giáo viên chủ nhiệm lớp: ${studentClass} (${teacherName})`
-          : `- Giáo viên chủ nhiệm lớp: ${studentClass || '...'}`;
+          ? `- Giáo viên chủ nhiệm lớp ${studentClass} (${teacherName})`
+          : `- Giáo viên chủ nhiệm lớp ${studentClass || '...'}`;
 
         finalLetter = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
 Độc lập - Tự do - Hạnh phúc
@@ -258,24 +259,20 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
 
 ĐƠN XIN PHÉP NGHỈ HỌC
 
-Kính gửi:  - Ban giám hiệu trường ${schoolName}
+Kính gửi:  - Ban giám hiệu trường ${schoolDisplay}
            ${teacherLine}
 
 Em tên là: ${studentName}
 Hiện là học sinh lớp: ${studentClass}
-Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${parts.reverse().join('/')}.
-Lý do (Ghi cụ thể): ${selectedPreset}. ${reasonDetail ? `(${reasonDetail})` : ''}
+Em viết đơn này xin phép được nghỉ học ${sessionText} ngày ${formattedDate}.
+Lý do (Ghi cụ thể): ${selectedPreset}${reasonDetail?.trim() ? ` (${reasonDetail.trim()})` : ''}
 Em xin hứa: Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
 
 Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
 
-                                    Giai Lạc, ngày ${d} tháng ${m} năm ${y}
-
-      Chữ ký của Phụ huynh học sinh                    Người làm đơn
-                                                      (Ghi rõ họ và tên)
-
-         ${parentName || 'Phụ huynh'}                                   ${studentName || 'Học sinh'}
-       (SĐT: ${parentPhone || '...'})`;
+Giai Lạc, ngày ${d} tháng ${m} năm ${y}
+Chữ ký của Phụ huynh học sinh: ${parentName || 'Phụ huynh'} (SĐT: ${parentPhone || '...'})
+Người làm đơn: ${studentName || 'Học sinh'}`.normalize('NFC');
       }
 
       const { ok, data } = await apiFetch('/api/absences', {
@@ -645,100 +642,22 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
                   </div>
 
                   {/* Standard Printed Document Mockup */}
-                  <div className="bg-slate-50/80 p-5 sm:p-8 rounded-xl border border-slate-300 font-times text-slate-900 leading-relaxed text-xs sm:text-sm">
-                    {/* Quốc hiệu tiêu ngữ */}
-                    <div className="text-center mb-5">
-                      <div className="font-bold text-xs sm:text-sm uppercase tracking-wider">
-                        CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
-                      </div>
-                      <div className="font-bold text-xs sm:text-sm">
-                        Độc lập - Tự do - Hạnh phúc
-                      </div>
-                      <div className="text-[10px] text-slate-500 font-sans tracking-widest mt-0.5">
-                        ----------------***----------------
-                      </div>
-                    </div>
-
-                    {/* Title */}
-                    <div className="text-center font-bold text-base sm:text-lg uppercase tracking-wide my-4 text-slate-950">
-                      ĐƠN XIN PHÉP NGHỈ HỌC
-                    </div>
-
-                    {/* Recipient */}
-                    <div className="mb-4 pl-2 sm:pl-6 space-y-1">
-                      <div className="flex">
-                        <span className="font-bold w-20 shrink-0">Kính gửi:</span>
-                        <span>- Ban giám hiệu trường {schoolName}</span>
-                      </div>
-                      <div className="flex">
-                        <span className="w-20 shrink-0"></span>
-                        <span>
-                          - Giáo viên chủ nhiệm lớp: <span className="font-bold">{studentClass}</span>{' '}
-                          {teacherName && (
-                            <span className="italic font-medium">({teacherName})</span>
-                          )}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="space-y-2.5">
-                      <div>
-                        <span className="font-bold">Em tên là:</span>{' '}
-                        <span className="underline decoration-dotted underline-offset-4 font-semibold text-slate-950">
-                          {studentName || '...................................................'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="font-bold">Hiện là học sinh lớp:</span>{' '}
-                        <span className="font-semibold">{studentClass || '...................'}</span>
-                      </div>
-                      <div>
-                        <span className="font-bold">Em viết đơn này xin phép được nghỉ học</span>{' '}
-                        <span className="font-semibold text-blue-900">
-                          {morning && afternoon ? 'cả ngày (buổi sáng và buổi chiều)' : morning ? 'buổi sáng' : 'buổi chiều'}
-                        </span>{' '}
-                        ngày <span className="font-semibold">{date.split('-').reverse().join('/')}</span>.
-                      </div>
-                      <div>
-                        <span className="font-bold">Lý do (Ghi cụ thể):</span>{' '}
-                        <span>{selectedPreset}. {reasonDetail}</span>
-                      </div>
-                      <div>
-                        <span className="font-bold">Em xin hứa:</span>{' '}
-                        <span>
-                          Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
-                        </span>
-                      </div>
-                      <div className="pt-1.5">
-                        Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
-                      </div>
-                    </div>
-
-                    {/* Date */}
-                    <div className="text-right italic mt-6 text-slate-700">
-                      Giai Lạc, ngày {date.split('-')[2] || '...'} tháng {date.split('-')[1] || '...'} năm {date.split('-')[0] || '2026'}
-                    </div>
-
-                    {/* Signatures */}
-                    <div className="grid grid-cols-2 gap-4 mt-4 text-center">
-                      <div>
-                        <div className="font-bold">Chữ ký của Phụ huynh học sinh</div>
-                        <div className="h-14 flex items-center justify-center text-[10px] text-slate-400 italic">
-                          (Đã xác nhận điện tử)
-                        </div>
-                        <div className="font-bold text-slate-900">{parentName || 'Phụ huynh'}</div>
-                        <div className="text-[10px] text-slate-500 font-sans mt-0.5">(SĐT: {parentPhone})</div>
-                      </div>
-                      <div>
-                        <div className="font-bold">Người làm đơn</div>
-                        <div className="text-[10px] italic text-slate-500 font-sans">(Ghi rõ họ và tên)</div>
-                        <div className="h-12 flex items-center justify-center text-[10px] text-slate-400 italic">
-                          (Đã ký)
-                        </div>
-                        <div className="font-bold text-slate-900">{studentName || 'Học sinh'}</div>
-                      </div>
-                    </div>
+                  <div className="bg-slate-100/70 p-2 sm:p-4 rounded-xl">
+                    <FormalLeaveDocument
+                      compact
+                      schoolName={schoolName}
+                      studentName={studentName}
+                      studentClass={studentClass}
+                      teacherName={teacherName}
+                      date={date}
+                      morning={morning}
+                      afternoon={afternoon}
+                      reasonPreset={selectedPreset}
+                      reasonDetail={reasonDetail}
+                      parentName={parentName || session.name}
+                      parentPhone={parentPhone}
+                      aiLetter={aiLetter}
+                    />
                   </div>
 
                   {/* Quick Edit Area Accordion */}

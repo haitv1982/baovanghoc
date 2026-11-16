@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { X, FileText, Image as ImageIcon, Download, Copy, Check, Printer, User, Calendar, Clock, AlertCircle } from 'lucide-react';
+import { X, FileText, Image as ImageIcon, Download, Copy, Check, Printer, User } from 'lucide-react';
 import { AbsenceRecord } from '../types';
+import { FormalLeaveDocument, cleanSchoolDisplay, extractLetterFields } from './FormalLeaveDocument';
 
 interface ProofModalProps {
   record: AbsenceRecord | null;
@@ -15,8 +16,15 @@ export const ProofModal: React.FC<ProofModalProps> = ({ record, onClose, schoolN
   if (!record) return null;
 
   const hasAttachment = Boolean(record.attachmentData || record.attachmentName);
-  const isImageAttachment = record.attachmentType?.startsWith('image/') || 
+  const isImageAttachment = record.attachmentType?.startsWith('image/') ||
     record.attachmentName?.match(/\.(jpg|jpeg|png|webp|gif)$/i);
+
+  const schoolDisplay = cleanSchoolDisplay(schoolName);
+  const nfcStudent = (record.studentName || '').normalize('NFC');
+  const nfcClass = (record.studentClass || '').normalize('NFC');
+  const nfcTeacher = (record.teacherName || '').normalize('NFC');
+  const nfcParent = (record.parentName || '').normalize('NFC');
+  const nfcPhone = (record.parentPhone || '').normalize('NFC');
 
   const sessionText =
     record.morning && record.afternoon
@@ -27,107 +35,121 @@ export const ProofModal: React.FC<ProofModalProps> = ({ record, onClose, schoolN
       ? 'buổi chiều'
       : 'trong ngày';
 
-  // Parse date
   let day = '...';
   let month = '...';
   let year = '2026';
   if (record.date && record.date.includes('-')) {
     const [y, m, d] = record.date.split('-');
-    day = d;
-    month = m;
-    year = y;
+    day = d || '...';
+    month = m || '...';
+    year = y || '2026';
   }
 
+  const defaultReason = `${(record.reasonPreset || '').normalize('NFC')}${
+    record.reasonDetail?.trim() ? ` (${record.reasonDetail.trim().normalize('NFC')})` : ''
+  }`;
+  const defaultPromise =
+    'Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.';
+  const { reasonText, promiseText } = extractLetterFields(record.aiLetter, defaultReason, defaultPromise);
+
+  const buildStandardLetterHtml = (forPrint = false) => `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+    <head>
+      <meta charset='utf-8'>
+      <title>Đơn xin phép nghỉ học - ${nfcStudent}</title>
+      <style>
+        @page { size: A4 portrait; margin: 2cm 2cm 2cm 2.5cm; }
+        body { font-family: 'Times New Roman', serif; font-size: 14pt; line-height: 1.55; margin: ${forPrint ? '35px 45px' : '0'}; color: #000000; }
+        .header { text-align: center; margin-bottom: 18pt; }
+        .national-motto { font-size: 13pt; font-weight: bold; text-transform: uppercase; }
+        .independence { font-size: 13pt; font-weight: bold; margin-top: 2pt; }
+        .divider { font-size: 11pt; margin-top: 2pt; letter-spacing: 1pt; }
+        .title { text-align: center; font-size: 17pt; font-weight: bold; text-transform: uppercase; margin: 18pt 0 14pt 0; }
+        .recipient-table { width: 100%; border-collapse: collapse; margin-bottom: 12pt; margin-left: 24pt; }
+        .recipient-table td { border: none; padding: 1.5pt 2pt; font-size: 14pt; vertical-align: top; }
+        .line-item { margin: 6pt 0; text-align: justify; }
+        .date-location { text-align: right; margin-top: 22pt; margin-bottom: 14pt; font-style: italic; padding-right: 12pt; }
+        .signatures { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+        .signatures td { width: 50%; text-align: center; vertical-align: top; border: none; font-size: 14pt; }
+        .sig-title { font-weight: bold; }
+        .sig-note { font-style: italic; font-weight: normal; font-size: 12pt; }
+        .sig-space { height: 56pt; }
+        .sig-name { font-weight: bold; }
+      </style>
+    </head>
+    <body>
+      <div class="header">
+        <div class="national-motto">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</div>
+        <div class="independence">Độc lập - Tự do - Hạnh phúc</div>
+        <div class="divider">----------------***----------------</div>
+      </div>
+
+      <div class="title">ĐƠN XIN PHÉP NGHỈ HỌC</div>
+
+      <table class="recipient-table">
+        <tr>
+          <td style="width: 78pt; font-weight: bold;">Kính gửi:</td>
+          <td>- Ban giám hiệu trường ${schoolDisplay}</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>- Giáo viên chủ nhiệm lớp <b>${nfcClass}</b>${nfcTeacher ? ` (${nfcTeacher})` : ''}</td>
+        </tr>
+      </table>
+
+      <div class="line-item"><b>Em tên là:</b> <b>${nfcStudent}</b></div>
+      <div class="line-item"><b>Hiện là học sinh lớp:</b> <b>${nfcClass}</b></div>
+      <div class="line-item">Em viết đơn này xin phép được nghỉ học <b>${sessionText}</b> ngày <b>${record.dateDisplay}</b>.</div>
+      <div class="line-item"><b>Lý do (Ghi cụ thể):</b> ${reasonText}</div>
+      <div class="line-item"><b>Em xin hứa:</b> ${promiseText}</div>
+      <div class="line-item" style="margin-top: 10pt;">Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!</div>
+
+      <div class="date-location">
+        Giai Lạc, ngày ${day} tháng ${month} năm ${year}
+      </div>
+
+      <table class="signatures">
+        <tr>
+          <td>
+            <div class="sig-title">Chữ ký của Phụ huynh học sinh</div>
+            <div class="sig-note">(Ký và ghi rõ họ tên)</div>
+          </td>
+          <td>
+            <div class="sig-title">Người làm đơn</div>
+            <div class="sig-note">(Ghi rõ họ và tên)</div>
+          </td>
+        </tr>
+        <tr>
+          <td class="sig-space"></td>
+          <td class="sig-space"></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="sig-name">${nfcParent}</div>
+            <div style="font-style: italic; font-size: 12pt;">(SĐT: ${nfcPhone})</div>
+          </td>
+          <td class="sig-name">${nfcStudent}</td>
+        </tr>
+      </table>
+      ${forPrint ? '<script>window.onload = function() { window.print(); window.close(); }</script>' : ''}
+    </body>
+    </html>
+  `.normalize('NFC');
+
   const handleCopyLetter = () => {
-    if (record.aiLetter) {
-      navigator.clipboard.writeText(record.aiLetter);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    const plainText = `CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM\nĐộc lập - Tự do - Hạnh phúc\n----------------***----------------\n\nĐƠN XIN PHÉP NGHỈ HỌC\n\nKính gửi: - Ban giám hiệu trường ${schoolDisplay}\n          - Giáo viên chủ nhiệm lớp ${nfcClass}${nfcTeacher ? ` (${nfcTeacher})` : ''}\n\nEm tên là: ${nfcStudent}\nHiện là học sinh lớp: ${nfcClass}\nEm viết đơn này xin phép được nghỉ học ${sessionText} ngày ${record.dateDisplay}.\nLý do (Ghi cụ thể): ${reasonText}\nEm xin hứa: ${promiseText}\n\nRất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!\n\nGiai Lạc, ngày ${day} tháng ${month} năm ${year}\nPhụ huynh: ${nfcParent} (SĐT: ${nfcPhone}) | Người làm đơn: ${nfcStudent}`.normalize('NFC');
+    navigator.clipboard.writeText(plainText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDownloadWordDoc = () => {
-    // Generate a Word-compatible HTML blob (.doc) formatted exactly like the photo
-    const content = `
-      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-      <head>
-        <meta charset='utf-8'>
-        <title>Đơn xin phép nghỉ học - ${record.studentName}</title>
-        <style>
-          body { font-family: 'Times New Roman', serif; font-size: 13pt; line-height: 1.5; margin: 40px 60px; color: #000; }
-          .header { text-align: center; font-weight: bold; margin-bottom: 25px; }
-          .header .national-motto { font-size: 13pt; }
-          .header .independence { font-size: 13pt; font-weight: bold; }
-          .header .divider { font-size: 11pt; margin-top: 2px; }
-          .title { text-align: center; font-size: 17pt; font-weight: bold; margin: 25px 0 20px 0; letter-spacing: 0.5px; }
-          .recipient { margin-bottom: 15px; }
-          .recipient table { width: 100%; border: none; }
-          .line-item { margin: 10px 0; text-align: justify; }
-          .line-dots { border-bottom: 1px dotted #333; display: inline-block; }
-          .date-location { text-align: right; margin-top: 30px; font-style: italic; }
-          .signatures { width: 100%; margin-top: 25px; border-collapse: collapse; }
-          .signatures td { width: 50%; text-align: center; vertical-align: top; border: none; font-size: 13pt; }
-          .sig-title { font-weight: bold; }
-          .sig-note { font-style: italic; font-size: 11pt; margin-top: 4px; }
-          .sig-space { height: 75px; }
-          .sig-name { font-weight: bold; }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div class="national-motto">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</div>
-          <div class="independence">Độc lập - Tự do - Hạnh phúc</div>
-          <div class="divider">----------------***----------------</div>
-        </div>
-
-        <div class="title">ĐƠN XIN PHÉP NGHỈ HỌC</div>
-
-        <div class="recipient">
-          <table cellpadding="2">
-            <tr>
-              <td style="width: 100px; font-weight: bold; vertical-align: top;">Kính gửi:</td>
-              <td>- Ban giám hiệu trường ${schoolName}</td>
-            </tr>
-            <tr>
-              <td></td>
-              <td>- Giáo viên chủ nhiệm lớp ${record.studentClass} ${record.teacherName ? `(Thầy/Cô: ${record.teacherName})` : ''}</td>
-            </tr>
-          </table>
-        </div>
-
-        <div class="line-item"><b>Em tên là:</b> ${record.studentName}</div>
-        <div class="line-item"><b>Hiện là học sinh lớp:</b> ${record.studentClass}</div>
-        <div class="line-item"><b>Em viết đơn này xin phép được nghỉ học</b> ${sessionText} ngày ${record.dateDisplay}.</div>
-        <div class="line-item"><b>Lý do (Ghi cụ thể):</b> ${record.reasonPreset}. ${record.reasonDetail || ''}</div>
-        <div class="line-item"><b>Em xin hứa:</b> Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.</div>
-        <div class="line-item" style="margin-top: 15px;">Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!</div>
-
-        <div class="date-location">
-          Giai Lạc, ngày ${day} tháng ${month} năm ${year}
-        </div>
-
-        <table class="signatures">
-          <tr>
-            <td class="sig-title">Chữ ký của Phụ huynh học sinh</td>
-            <td class="sig-title">Người làm đơn<br/><span class="sig-note">(Ghi rõ họ và tên)</span></td>
-          </tr>
-          <tr>
-            <td class="sig-space"></td>
-            <td class="sig-space"></td>
-          </tr>
-          <tr>
-            <td class="sig-name">${record.parentName}<br/><span style="font-weight:normal; font-size:11pt;">(SĐT: ${record.parentPhone})</span></td>
-            <td class="sig-name">${record.studentName}</td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-    const blob = new Blob(['\ufeff' + content], { type: 'application/msword' });
+    const content = buildStandardLetterHtml(false);
+    const blob = new Blob(['\ufeff' + content], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Don_xin_nghi_hoc_${record.studentName.replace(/\s+/g, '_')}_${record.date}.doc`;
+    a.download = `Don_xin_nghi_hoc_${nfcStudent.replace(/\s+/g, '_')}_${record.date}.doc`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -137,67 +159,7 @@ export const ProofModal: React.FC<ProofModalProps> = ({ record, onClose, schoolN
   const handlePrint = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>In Đơn Xin Nghỉ Học - ${record.studentName}</title>
-          <style>
-            body { font-family: 'Times New Roman', serif; padding: 45px 55px; line-height: 1.6; font-size: 14pt; }
-            .center { text-align: center; }
-            .right { text-align: right; }
-            .bold { font-weight: bold; }
-            .title { font-size: 18pt; margin: 25px 0 20px 0; letter-spacing: 0.5px; }
-            .sig-table { width: 100%; margin-top: 35px; border-collapse: collapse; }
-            .sig-table td { width: 50%; text-align: center; vertical-align: top; }
-            .sig-space { height: 75px; }
-          </style>
-        </head>
-        <body>
-          <div class="center bold">
-            <div>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</div>
-            <div>Độc lập - Tự do - Hạnh phúc</div>
-            <div style="font-weight: normal; margin-top: 2px;">----------------***----------------</div>
-          </div>
-
-          <div class="center bold title">ĐƠN XIN PHÉP NGHỈ HỌC</div>
-
-          <div style="margin-left: 20px; margin-bottom: 20px;">
-            <div><b>Kính gửi:</b> &nbsp; - Ban giám hiệu trường ${schoolName}</div>
-            <div style="margin-left: 65px;">- Giáo viên chủ nhiệm lớp: ${record.studentClass} ${record.teacherName ? `(Thầy/Cô: ${record.teacherName})` : ''}</div>
-          </div>
-
-          <div style="margin-bottom: 10px;"><b>Em tên là:</b> ${record.studentName}</div>
-          <div style="margin-bottom: 10px;"><b>Hiện là học sinh lớp:</b> ${record.studentClass}</div>
-          <div style="margin-bottom: 10px;"><b>Em viết đơn này xin phép được nghỉ học</b> ${sessionText} ngày ${record.dateDisplay}.</div>
-          <div style="margin-bottom: 10px;"><b>Lý do (Ghi cụ thể):</b> ${record.reasonPreset}. ${record.reasonDetail || ''}</div>
-          <div style="margin-bottom: 10px;"><b>Em xin hứa:</b> Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.</div>
-          <div style="margin-top: 15px;">Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!</div>
-
-          <div class="right" style="margin-top: 30px; font-style: italic;">
-            Giai Lạc, ngày ${day} tháng ${month} năm ${year}
-          </div>
-
-          <table class="sig-table">
-            <tr>
-              <td class="bold">Chữ ký của Phụ huynh học sinh</td>
-              <td class="bold">Người làm đơn<br/><span style="font-style: italic; font-weight: normal; font-size: 11pt;">(Ghi rõ họ và tên)</span></td>
-            </tr>
-            <tr>
-              <td class="sig-space"></td>
-              <td class="sig-space"></td>
-            </tr>
-            <tr>
-              <td class="bold">${record.parentName}<br/><span style="font-weight: normal; font-size: 11pt;">(SĐT: ${record.parentPhone})</span></td>
-              <td class="bold">${record.studentName}</td>
-            </tr>
-          </table>
-
-          <script>
-            window.onload = function() { window.print(); window.close(); }
-          </script>
-        </body>
-      </html>
-    `);
+    printWindow.document.write(buildStandardLetterHtml(true));
     printWindow.document.close();
   };
 
@@ -292,108 +254,21 @@ export const ProofModal: React.FC<ProofModalProps> = ({ record, onClose, schoolN
         {/* Modal Body */}
         <div className="p-6 max-h-[65vh] overflow-y-auto bg-slate-100/70">
           {activeTab === 'letter' ? (
-            /* Official Paper Document View (Styled like standard A4 letter) */
-            <div className="bg-white p-8 sm:p-12 rounded-xl border border-slate-300 shadow-md font-times text-slate-900 max-w-2xl mx-auto leading-relaxed text-sm sm:text-base">
-              {/* Quốc hiệu tiêu ngữ */}
-              <div className="text-center mb-6">
-                <div className="font-bold text-sm sm:text-base uppercase tracking-wider">
-                  CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM
-                </div>
-                <div className="font-bold text-sm sm:text-base">
-                  Độc lập - Tự do - Hạnh phúc
-                </div>
-                <div className="text-xs text-slate-600 font-sans tracking-widest mt-0.5">
-                  ----------------***----------------
-                </div>
-              </div>
-
-              {/* Title */}
-              <div className="text-center font-bold text-lg sm:text-xl uppercase tracking-wide my-6 text-slate-900">
-                ĐƠN XIN PHÉP NGHỈ HỌC
-              </div>
-
-              {/* Recipient */}
-              <div className="mb-5 space-y-1 pl-4 sm:pl-8 text-sm sm:text-base">
-                <div className="flex">
-                  <span className="font-bold w-24 shrink-0">Kính gửi:</span>
-                  <span>- Ban giám hiệu trường {schoolName}</span>
-                </div>
-                <div className="flex">
-                  <span className="w-24 shrink-0"></span>
-                  <span>
-                    - Giáo viên chủ nhiệm lớp: <span className="font-bold">{record.studentClass}</span>{' '}
-                    {record.teacherName && (
-                      <span className="italic text-slate-700">({record.teacherName})</span>
-                    )}
-                  </span>
-                </div>
-              </div>
-
-              {/* Student info & reason */}
-              <div className="space-y-3 text-sm sm:text-base">
-                <div>
-                  <span className="font-bold">Em tên là:</span>{' '}
-                  <span className="font-semibold text-slate-950 underline decoration-dotted underline-offset-4">
-                    {record.studentName}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="font-bold">Hiện là học sinh lớp:</span>{' '}
-                  <span className="font-semibold">{record.studentClass}</span>
-                </div>
-
-                <div>
-                  <span className="font-bold">Em viết đơn này xin phép được nghỉ học</span>{' '}
-                  <span className="font-semibold text-blue-900">{sessionText}</span> ngày{' '}
-                  <span className="font-semibold">{record.dateDisplay}</span>.
-                </div>
-
-                <div>
-                  <span className="font-bold">Lý do (Ghi cụ thể):</span>{' '}
-                  <span>
-                    {record.reasonPreset}. {record.reasonDetail || ''}
-                  </span>
-                </div>
-
-                <div>
-                  <span className="font-bold">Em xin hứa:</span>{' '}
-                  <span>
-                    Sẽ tự giác chép bài, mượn vở bạn bù đắp kiến thức những tiết học vắng, hoàn thành bài tập đầy đủ và đi học lại nghiêm túc, đúng giờ.
-                  </span>
-                </div>
-
-                <div className="pt-2">
-                  Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thành cám ơn!
-                </div>
-              </div>
-
-              {/* Date & Location */}
-              <div className="text-right italic mt-8 text-sm sm:text-base text-slate-700">
-                Giai Lạc, ngày {day} tháng {month} năm {year}
-              </div>
-
-              {/* Two-Column Signatures */}
-              <div className="grid grid-cols-2 gap-4 mt-6 text-center text-sm sm:text-base">
-                <div>
-                  <div className="font-bold">Chữ ký của Phụ huynh học sinh</div>
-                  <div className="h-20 flex items-center justify-center text-xs text-slate-400 italic">
-                    (Đã xác nhận điện tử)
-                  </div>
-                  <div className="font-bold text-slate-900">{record.parentName}</div>
-                  <div className="text-xs text-slate-500 font-sans mt-0.5">(SĐT: {record.parentPhone})</div>
-                </div>
-
-                <div>
-                  <div className="font-bold">Người làm đơn</div>
-                  <div className="text-xs italic text-slate-500 font-sans">(Ghi rõ họ và tên)</div>
-                  <div className="h-16 flex items-center justify-center text-xs text-slate-400 italic">
-                    (Đã ký)
-                  </div>
-                  <div className="font-bold text-slate-900">{record.studentName}</div>
-                </div>
-              </div>
-            </div>
+            <FormalLeaveDocument
+              schoolName={schoolName}
+              studentName={record.studentName}
+              studentClass={record.studentClass}
+              teacherName={record.teacherName}
+              date={record.date}
+              dateDisplay={record.dateDisplay}
+              morning={record.morning}
+              afternoon={record.afternoon}
+              reasonPreset={record.reasonPreset}
+              reasonDetail={record.reasonDetail}
+              parentName={record.parentName}
+              parentPhone={record.parentPhone}
+              aiLetter={record.aiLetter}
+            />
           ) : (
             <div className="space-y-4">
               {hasAttachment ? (
