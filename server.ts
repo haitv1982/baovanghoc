@@ -833,6 +833,43 @@ export function createApiApp() {
     }
   });
 
+  // 1h-2. Batch delete teachers
+  app.post('/api/teachers/batch-delete', (req: Request, res: Response) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vui lòng chọn ít nhất một giáo viên để xóa.',
+        });
+      }
+
+      const idSet = new Set(ids.map((v) => String(v)));
+      const teachers = getTeachers();
+      const remaining = teachers.filter((t) => !idSet.has(t.id));
+      const deletedCount = teachers.length - remaining.length;
+
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: 'Không tìm thấy tài khoản giáo viên nào khớp để xóa.',
+        });
+      }
+
+      const reindexed = remaining.map((t, idx) => ({ ...t, orderNumber: idx + 1 }));
+      saveTeachers(reindexed);
+
+      return res.json({
+        success: true,
+        deletedCount,
+        data: reindexed,
+        message: `Đã xóa thành công ${deletedCount} tài khoản giáo viên.`,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // 1i. Parent Accounts CRUD & QR Provisioning (Admin)
   app.get('/api/parents', (_req: Request, res: Response) => {
     try {

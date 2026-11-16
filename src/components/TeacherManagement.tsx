@@ -44,6 +44,11 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
   const [batchText, setBatchText] = useState<string>('');
   const [batchNotice, setBatchNotice] = useState<string>('');
 
+  // Multi-select bulk delete
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState<boolean>(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState<boolean>(false);
+
   // Notification message
   const [toastMessage, setToastMessage] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -66,6 +71,20 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
   useEffect(() => {
     loadTeachers();
   }, []);
+
+  // Remove stale IDs from selection when teachers list changes
+  useEffect(() => {
+    const validIds = new Set(teachers.map((t) => t.id));
+    setSelectedIds((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((id) => {
+        if (validIds.has(id)) next.add(id);
+        else changed = true;
+      });
+      return changed ? next : prev;
+    });
+  }, [teachers]);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -249,6 +268,55 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
       }
     } catch (err: any) {
       setErrorMessage(err?.message || 'Lỗi xóa giáo viên.');
+    }
+  };
+
+  const allSelected = teachers.length > 0 && teachers.every((t) => selectedIds.has(t.id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(teachers.map((t) => t.id)));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleBulkDeleteTeachers = async () => {
+    if (selectedIds.size === 0) return;
+    setIsBulkDeleting(true);
+    setErrorMessage('');
+    try {
+      const ids = Array.from(selectedIds);
+      const { ok, data } = await apiFetch('/api/teachers/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!ok || !data.success) {
+        throw new Error(data.message || 'Không thể xóa hàng loạt giáo viên đã chọn.');
+      }
+      setSelectedIds(new Set());
+      setShowBulkDeleteModal(false);
+      if (Array.isArray(data.data)) {
+        setTeachers(data.data);
+      } else {
+        loadTeachers();
+      }
+      showToast(data.message || `Đã xóa thành công ${ids.length} giáo viên đã chọn.`);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Lỗi khi xóa hàng loạt tài khoản giáo viên.');
+      setShowBulkDeleteModal(false);
+    } finally {
+      setIsBulkDeleting(false);
     }
   };
 
@@ -451,12 +519,48 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
         </div>
       </div>
 
+      {/* Bulk Selection Bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-extrabold text-red-900">
+              Đã tích chọn {selectedIds.size} giáo viên
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 hover:bg-slate-100 font-semibold transition"
+            >
+              Bỏ chọn
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowBulkDeleteModal(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold shadow-sm transition"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Xóa đã chọn ({selectedIds.size})</span>
+          </button>
+        </div>
+      )}
+
       {/* Teachers Table */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                <th className="py-3 px-3 text-center w-10">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                    title="Chọn tất cả giáo viên"
+                  />
+                </th>
                 <th className="py-3 px-3 text-center w-12">TT</th>
                 <th className="py-3 px-4 min-w-[160px]">Họ và tên giáo viên</th>
                 <th className="py-3 px-3 text-center w-36">Chức vụ / Lớp</th>
@@ -466,17 +570,42 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200">
-              {teachers.map((teacher, idx) => {
-                const isPasswordShown = Boolean(visiblePasswords[teacher.id]);
-                return (
-                  <tr key={teacher.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-3 text-center font-bold text-slate-400">
-                      {idx + 1}
-                    </td>
+              {teachers.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-slate-400">
+                    {isLoading
+                      ? 'Đang tải danh sách tài khoản giáo viên...'
+                      : 'Chưa có tài khoản giáo viên nào.'}
+                  </td>
+                </tr>
+              ) : (
+                teachers.map((teacher, idx) => {
+                  const isPasswordShown = Boolean(visiblePasswords[teacher.id]);
+                  const isSelected = selectedIds.has(teacher.id);
+                  return (
+                    <tr
+                      key={teacher.id}
+                      className={`transition-colors ${
+                        isSelected ? 'bg-indigo-50/70' : 'hover:bg-slate-50/80'
+                      }`}
+                    >
+                      <td className="py-3 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggleSelectOne(teacher.id)}
+                          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                          aria-label={`Chọn giáo viên ${teacher.name}`}
+                        />
+                      </td>
 
-                    <td className="py-3 px-4 font-bold text-slate-900">
-                      {teacher.name}
-                    </td>
+                      <td className="py-3 px-3 text-center font-bold text-slate-400">
+                        {idx + 1}
+                      </td>
+
+                      <td className="py-3 px-4 font-bold text-slate-900">
+                        {teacher.name}
+                      </td>
 
                     <td className="py-3 px-3 text-center">
                       {teacher.assignedClass ? (
@@ -541,9 +670,10 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
                         </button>
                       </div>
                     </td>
-                  </tr>
-                );
-              })}
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -702,6 +832,45 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
                 className="flex-1 py-2.5 px-3 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md transition"
               >
                 Tạo & Cấp Tài Khoản Tự Động
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: Confirm Bulk Delete Teachers */}
+      {showBulkDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-100">
+          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200">
+            <div className="w-12 h-12 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-extrabold text-slate-900 text-center">
+              Xác Nhận Xóa {selectedIds.size} Giáo Viên?
+            </h3>
+            <p className="text-xs text-slate-500 text-center mt-2 leading-relaxed">
+              Bạn có chắc chắn muốn xóa <b className="text-slate-900">{selectedIds.size}</b> tài khoản giáo viên đã tích chọn khỏi hệ thống?
+            </p>
+            <p className="text-[11px] text-red-500 text-center mt-1">
+              * Hành động này không thể hoàn tác.
+            </p>
+
+            <div className="flex items-center gap-2 mt-5">
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={() => setShowBulkDeleteModal(false)}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isBulkDeleting}
+                onClick={handleBulkDeleteTeachers}
+                className="flex-1 py-2.5 px-3 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl shadow-md shadow-red-500/20 transition disabled:opacity-50"
+              >
+                {isBulkDeleting ? 'Đang xóa...' : `Xác nhận xóa (${selectedIds.size})`}
               </button>
             </div>
           </div>

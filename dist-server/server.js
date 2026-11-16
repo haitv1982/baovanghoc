@@ -741,6 +741,37 @@ function createApiApp() {
       return res.status(500).json({ success: false, message: err.message });
     }
   });
+  app.post("/api/teachers/batch-delete", (req, res) => {
+    try {
+      const { ids } = req.body;
+      if (!Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui l\xF2ng ch\u1ECDn \xEDt nh\u1EA5t m\u1ED9t gi\xE1o vi\xEAn \u0111\u1EC3 x\xF3a."
+        });
+      }
+      const idSet = new Set(ids.map((v) => String(v)));
+      const teachers = getTeachers();
+      const remaining = teachers.filter((t) => !idSet.has(t.id));
+      const deletedCount = teachers.length - remaining.length;
+      if (deletedCount === 0) {
+        return res.status(404).json({
+          success: false,
+          message: "Kh\xF4ng t\xECm th\u1EA5y t\xE0i kho\u1EA3n gi\xE1o vi\xEAn n\xE0o kh\u1EDBp \u0111\u1EC3 x\xF3a."
+        });
+      }
+      const reindexed = remaining.map((t, idx) => ({ ...t, orderNumber: idx + 1 }));
+      saveTeachers(reindexed);
+      return res.json({
+        success: true,
+        deletedCount,
+        data: reindexed,
+        message: `\u0110\xE3 x\xF3a th\xE0nh c\xF4ng ${deletedCount} t\xE0i kho\u1EA3n gi\xE1o vi\xEAn.`
+      });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
   app.get("/api/parents", (_req, res) => {
     try {
       const users = getUsers();
