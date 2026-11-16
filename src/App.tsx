@@ -7,6 +7,7 @@ import { TeacherDashboard } from './components/TeacherDashboard';
 import { ProofModal } from './components/ProofModal';
 import { AbsenceRecord, UserSession } from './types';
 import { School } from 'lucide-react';
+import { apiFetch } from './utils/api';
 
 const SESSION_STORAGE_KEY = 'school_current_session';
 const SCHOOL_NAME = 'Trường THCS Giai Lạc';
@@ -32,8 +33,7 @@ export default function App() {
   const loadAbsences = useCallback(async () => {
     setIsRefreshing(true);
     try {
-      const res = await fetch('/api/absences');
-      const data = await res.json();
+      const { data } = await apiFetch('/api/absences');
       if (data.success && Array.isArray(data.data)) {
         setAbsences(data.data);
       }
@@ -85,12 +85,11 @@ export default function App() {
     adminNote?: string
   ) => {
     try {
-      const res = await fetch(`/api/absences/${id}`, {
+      const { data } = await apiFetch(`/api/absences/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, adminNote }),
       });
-      const data = await res.json();
       if (data.success && data.data) {
         setAbsences((prev) =>
           prev.map((r) => (r.id === id ? { ...r, ...data.data } : r))
@@ -104,10 +103,9 @@ export default function App() {
   // When admin deletes record
   const handleDeleteRecord = async (id: string) => {
     try {
-      const res = await fetch(`/api/absences/${id}`, {
+      const { data } = await apiFetch(`/api/absences/${id}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
       if (data.success) {
         setAbsences((prev) => prev.filter((r) => r.id !== id));
       } else {

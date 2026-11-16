@@ -1,5 +1,4 @@
-import express, { Request, Response } from 'express';
-import { createServer as createViteServer } from 'vite';
+import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -11,27 +10,57 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const ROOT_DIR = fs.existsSync(path.join(__dirname, 'package.json'))
+  ? __dirname
+  : path.resolve(__dirname, '..');
+
 const PORT = Number(process.env.PORT) || 3000;
-const DATA_DIR = path.join(__dirname, 'data');
+const BUNDLED_DATA_DIR = path.join(ROOT_DIR, 'data');
+
+function resolveWritableDataDir(): string {
+  try {
+    if (!fs.existsSync(BUNDLED_DATA_DIR)) {
+      fs.mkdirSync(BUNDLED_DATA_DIR, { recursive: true });
+    }
+    const probeFile = path.join(BUNDLED_DATA_DIR, '.write-probe');
+    fs.writeFileSync(probeFile, 'ok');
+    fs.unlinkSync(probeFile);
+    return BUNDLED_DATA_DIR;
+  } catch {
+    const tmpDir = '/tmp/baovanghoc-data';
+    if (!fs.existsSync(tmpDir)) {
+      fs.mkdirSync(tmpDir, { recursive: true });
+    }
+    if (fs.existsSync(BUNDLED_DATA_DIR)) {
+      for (const file of fs.readdirSync(BUNDLED_DATA_DIR)) {
+        const src = path.join(BUNDLED_DATA_DIR, file);
+        const dest = path.join(tmpDir, file);
+        if (fs.statSync(src).isFile() && !fs.existsSync(dest)) {
+          fs.copyFileSync(src, dest);
+        }
+      }
+    }
+    return tmpDir;
+  }
+}
+
+const DATA_DIR = resolveWritableDataDir();
 const DATA_FILE = path.join(DATA_DIR, 'absences.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const ADMIN_FILE = path.join(DATA_DIR, 'admin.json');
 const TEACHERS_FILE = path.join(DATA_DIR, 'teachers.json');
 
-// Initialize Gemini client server-side
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
-
-// Ensure data folder exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
+// Initialize Gemini client server-side when API key is configured
+const ai = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    })
+  : null;
 
 export interface AbsenceRecord {
   id: string;
@@ -386,7 +415,7 @@ function generateTeacherPassword(): string {
   return `GV${random4}`;
 }
 
-async function startServer() {
+export function createApiApp() {
   const app = express();
 
   // Support large uploads for proof photos and Word documents
@@ -947,7 +976,7 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
        (SĐT: ${parentPhone || '...'})`;
 
     try {
-      if (!process.env.GEMINI_API_KEY) {
+      if (!ai) {
         return res.json({ success: true, letter: fallbackLetter });
       }
 
@@ -1036,13 +1065,42 @@ Yêu cầu:
     }
   });
 
+  // Ensure any unknown /api/* route always returns JSON
+  app.all('/api/*', (_req: Request, res: Response) => {
+    return res.status(404).json({
+      success: false,
+      message: 'API endpoint không tồn tại.',
+    });
+  });
+
+  // Global JSON error handler for API errors (e.g. invalid JSON payload)
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(err?.status || 500).json({
+        success: false,
+        message: err?.message || 'Lỗi xử lý máy chủ API.',
+      });
+    }
+    return next(err);
+  });
+
+  return app;
+}
+
+export const apiApp = createApiApp();
+
+async function startServer() {
+  const app = apiApp;
+
   // Serve static files or Vite middleware
   if (process.env.NODE_ENV === 'production') {
-    app.use(express.static(path.join(__dirname, 'dist')));
+    const distDir = path.join(ROOT_DIR, 'dist');
+    app.use(express.static(distDir));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -1055,6 +1113,16 @@ Yêu cầu:
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-});
+const isMainModule =
+  Boolean(process.argv[1]) &&
+  (path.resolve(process.argv[1]) === __filename ||
+    process.argv[1].endsWith('server.ts') ||
+    process.argv[1].endsWith('server.js'));
+
+if (isMainModule && !process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+  });
+}
+
+export default apiApp;

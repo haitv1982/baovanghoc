@@ -12,6 +12,7 @@ import {
   LogIn,
 } from 'lucide-react';
 import { UserSession } from '../types';
+import { apiFetch } from '../utils/api';
 
 interface AuthModalProps {
   onLoginSuccess: (session: UserSession) => void;
@@ -59,7 +60,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/parent-auth', {
+      const { ok, data } = await apiFetch('/api/auth/parent-auth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,8 +70,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Đăng nhập không thành công');
       }
 
@@ -107,7 +107,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/admin-login', {
+      const { ok, data } = await apiFetch('/api/auth/admin-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -116,8 +116,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Tên đăng nhập hoặc mật khẩu quản trị không đúng');
       }
 
@@ -149,7 +148,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/teacher-login', {
+      const { ok, data } = await apiFetch('/api/auth/teacher-login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -158,8 +157,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Tên đăng nhập hoặc mật khẩu giáo viên không đúng');
       }
 

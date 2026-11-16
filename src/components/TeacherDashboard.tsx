@@ -20,6 +20,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { AbsenceRecord, UserSession } from '../types';
+import { apiFetch } from '../utils/api';
 
 interface TeacherDashboardProps {
   session: UserSession;
@@ -121,7 +122,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
 
     setIsChangingPass(true);
     try {
-      const res = await fetch('/api/auth/teacher-change-password', {
+      const { ok, data } = await apiFetch('/api/auth/teacher-change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -130,8 +131,7 @@ export const TeacherDashboard: React.FC<TeacherDashboardProps> = ({
           newPassword,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Không thể đổi mật khẩu.');
       }
       setPasswordSuccess('Đổi mật khẩu thành công!');

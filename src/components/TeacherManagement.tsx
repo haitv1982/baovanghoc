@@ -19,6 +19,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { TeacherAccount } from '../types';
+import { apiFetch } from '../utils/api';
 
 interface TeacherManagementProps {
   schoolName?: string;
@@ -50,8 +51,7 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
   const loadTeachers = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/teachers');
-      const data = await res.json();
+      const { data } = await apiFetch('/api/teachers');
       if (data.success && Array.isArray(data.data)) {
         setTeachers(data.data);
       }
@@ -91,7 +91,7 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
     if (!singleName.trim()) return;
 
     try {
-      const res = await fetch('/api/teachers', {
+      const { ok, data } = await apiFetch('/api/teachers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -99,8 +99,7 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
           assignedClass: singleClass.trim(),
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Không thể tạo tài khoản giáo viên.');
       }
       showToast(`Đã cấp tài khoản cho ${singleName}: ${data.data.username}`);
@@ -187,13 +186,12 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
     }
 
     try {
-      const res = await fetch('/api/teachers/batch', {
+      const { ok, data } = await apiFetch('/api/teachers/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Không thể tạo tài khoản hàng loạt.');
       }
       showToast(`Đã tự sinh tài khoản và mật khẩu thành công cho ${data.count} giáo viên!`);
@@ -208,32 +206,30 @@ export const TeacherManagement: React.FC<TeacherManagementProps> = ({
   // Reset teacher password
   const handleResetPassword = async (teacher: TeacherAccount) => {
     try {
-      const res = await fetch(`/api/teachers/${teacher.id}/reset-password`, {
+      const { data } = await apiFetch(`/api/teachers/${teacher.id}/reset-password`, {
         method: 'PATCH',
       });
-      const data = await res.json();
       if (data.success) {
         showToast(`Đã cấp mật khẩu mới cho ${teacher.name}: ${data.newPassword}`);
         loadTeachers();
       }
-    } catch (err) {
-      console.error('Reset failed:', err);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Lỗi đặt lại mật khẩu.');
     }
   };
 
   // Delete teacher
   const handleDeleteTeacher = async (teacher: TeacherAccount) => {
     try {
-      const res = await fetch(`/api/teachers/${teacher.id}`, {
+      const { data } = await apiFetch(`/api/teachers/${teacher.id}`, {
         method: 'DELETE',
       });
-      const data = await res.json();
       if (data.success) {
         showToast(`Đã xóa tài khoản giáo viên ${teacher.name}.`);
         loadTeachers();
       }
-    } catch (err) {
-      console.error('Delete failed:', err);
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Lỗi xóa giáo viên.');
     }
   };
 

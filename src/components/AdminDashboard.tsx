@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { AbsenceRecord } from '../types';
 import { TeacherManagement } from './TeacherManagement';
+import { apiFetch } from '../utils/api';
 
 interface AdminDashboardProps {
   absences: AbsenceRecord[];
@@ -280,7 +281,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     setIsChangingAdminPass(true);
     try {
-      const res = await fetch('/api/auth/admin-change-password', {
+      const { ok, data } = await apiFetch('/api/auth/admin-change-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -288,8 +289,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           newPassword: adminNewPass,
         }),
       });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Không thể đổi mật khẩu quản trị.');
       }
       setAdminPassSuccess('Đổi mật khẩu Quản trị thành công!');

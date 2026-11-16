@@ -25,6 +25,7 @@ import {
   UserCheck,
 } from 'lucide-react';
 import { AbsenceRecord, UserSession } from '../types';
+import { apiFetch } from '../utils/api';
 
 interface ParentPortalProps {
   session: UserSession;
@@ -123,7 +124,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
     setIsGeneratingAi(true);
 
     try {
-      const res = await fetch('/api/ai/generate-letter', {
+      const { ok, data } = await apiFetch('/api/ai/generate-letter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -141,8 +142,7 @@ export const ParentPortal: React.FC<ParentPortalProps> = ({
         }),
       });
 
-      const data = await res.json();
-      if (data.success && data.letter) {
+      if (ok && data.success && data.letter) {
         setAiLetter(data.letter);
         setShowAiLetterPreview(true);
       } else {
@@ -278,7 +278,7 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
        (SĐT: ${parentPhone || '...'})`;
       }
 
-      const res = await fetch('/api/absences', {
+      const { ok, data } = await apiFetch('/api/absences', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -299,8 +299,7 @@ Rất mong được sự chấp nhận của quý Thầy, Cô. Em xin chân thà
         }),
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!ok || !data.success) {
         throw new Error(data.message || 'Không thể gửi đơn báo vắng.');
       }
 
